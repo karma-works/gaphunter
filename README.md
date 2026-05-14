@@ -4,7 +4,7 @@
 
 GapHunter is an AI-assisted market gap research tool for founders. It takes a constraint prompt, researches job-market and competitor signals, and returns ranked startup idea briefs with adversarial critiques and a research coverage score.
 
-The first implementation is a Cloud Run-ready FastAPI service. It runs in deterministic demo mode until Google API credentials are configured, which makes the app deployable and testable before Gemini, Google Custom Search, and Firestore are wired to real projects.
+The first implementation is a Cloud Run-ready FastAPI service. It runs in deterministic demo mode until a durable live search provider and Gemini credentials are configured, which makes the app deployable and testable while provider choices are finalized.
 
 Live demo: https://gaphunter-d2hympp5lq-oa.a.run.app
 
@@ -12,7 +12,7 @@ Live demo: https://gaphunter-d2hympp5lq-oa.a.run.app
 
 - Constraint parsing from natural language prompts
 - Idea generation run endpoint and minimal browser UI
-- Google Custom Search-backed job and competitor research when credentials are configured
+- Provider-backed job and competitor research boundary
 - Source-backed idea brief schema
 - Adversarial critique and research coverage score fields
 - Firestore-ready persistence boundary with in-memory fallback
@@ -54,9 +54,9 @@ All variables are optional for local demo mode.
 | `GCP_PROJECT_ID` | Google Cloud project used for Firestore and deployed runtime metadata |
 | `FIRESTORE_COLLECTION` | Firestore collection for run results, default `runs` |
 | `GEMINI_API_KEY` | Gemini API key for future live synthesis and critique |
-| `GOOGLE_CUSTOM_SEARCH_API_KEY` | Google Custom Search API key for future live search |
-| `JOB_SEARCH_ENGINE_ID` | Programmable Search Engine ID for job research |
-| `COMPETITOR_SEARCH_ENGINE_ID` | Programmable Search Engine ID for competitor checks |
+| `GOOGLE_CUSTOM_SEARCH_API_KEY` | Deprecated compatibility path for legacy Custom Search API accounts |
+| `JOB_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for job research |
+| `COMPETITOR_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for competitor checks |
 
 ## GitHub Actions Deployment
 
@@ -75,6 +75,8 @@ Required repository secrets:
 - `GCP_SERVICE_ACCOUNT`
 
 The target Google Cloud project must already have Cloud Run, Artifact Registry, IAM Credentials, Secret Manager, and Cloud Build APIs enabled.
+
+Custom Search API credentials are intentionally not wired into deployment. Google has closed Custom Search JSON API to new customers, so live search provider selection is tracked in the wiki learnings.
 
 ## Documentation
 

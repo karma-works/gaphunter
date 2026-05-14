@@ -14,4 +14,4 @@ GapHunter finds founder-grade market gaps by combining job-market research, comp
 
 ## Current Scope
 
-The first public build is a Cloud Run-ready service with a minimal UI and API. It starts in demo mode, then graduates to live Gemini, Google Custom Search, Firestore, and Firebase Auth as credentials and Google Cloud resources are added.
+The first public build is a Cloud Run-ready service with a minimal UI and API. It starts in demo mode, then graduates to live search, Gemini, Firestore, and Firebase Auth as provider decisions and Google Cloud resources are finalized.

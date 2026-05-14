@@ -59,9 +59,6 @@ jobs:
           flags: "--allow-unauthenticated --timeout=600"
           env_vars: |-
             GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
-            GOOGLE_CUSTOM_SEARCH_API_KEY=${{ secrets.GOOGLE_CUSTOM_SEARCH_API_KEY }}
-            JOB_SEARCH_ENGINE_ID=${{ vars.JOB_SEARCH_ENGINE_ID }}
-            COMPETITOR_SEARCH_ENGINE_ID=${{ vars.COMPETITOR_SEARCH_ENGINE_ID }}
 
       - name: Show URL
         run: echo "${{ steps.deploy.outputs.url }}"
