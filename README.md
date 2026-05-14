@@ -68,8 +68,8 @@ Required repository variables:
 
 Required repository secrets:
 
-- Either `GCP_CREDENTIALS_JSON` for a deploy service-account JSON key
-- Or both `GCP_WORKLOAD_IDENTITY_PROVIDER` and `GCP_SERVICE_ACCOUNT` for Workload Identity Federation
+- `GCP_WORKLOAD_IDENTITY_PROVIDER`
+- `GCP_SERVICE_ACCOUNT`
 
 The target Google Cloud project must already have Cloud Run, Artifact Registry, IAM Credentials, Secret Manager, and Cloud Build APIs enabled.
 
