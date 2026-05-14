@@ -1,44 +1,56 @@
-# ADR-004: Web Search — Google Custom Search API (Programmable Search Engine)
+# ADR-004: Web Search - Brave Search API
 
-**Status:** Decided
+**Status:** Decided, replaces the earlier Google Custom Search API decision
 **Date:** 2026-05-14
 
 ## Context
 
-The agent needs to search the web for two distinct purposes:
-1. **Job research**: Find real job postings and role descriptions matching user constraints (e.g., "complex digital-I/O professional roles in Switzerland")
-2. **Competitor check**: Determine whether an AI agent product already exists for a specific job type
+GapHunter needs live web search for two distinct purposes:
 
-Both require real-time web data — training data cutoffs make this unusable from the base LLM alone.
+1. **Job research**: Find public job postings and role descriptions matching user constraints.
+2. **Competitor checks**: Determine whether an AI agent product already exists for a specific job type.
 
-Alternatives: Google Custom Search API, SerpAPI (third-party Google wrapper), Bing Search API, Brave Search API, Playwright/browser automation, direct LinkedIn API.
+The first implementation attempted Google Custom Search JSON API with Programmable Search Engines. That path is no longer suitable because Google documents Custom Search JSON API as closed to new customers, and project-level API enablement plus API keys still returned access-denied responses in our setup.
+
+Alternatives evaluated: Brave Search API, SerpAPI, Google Agent Search, legacy Google Custom Search API, Playwright/browser automation, and direct LinkedIn/job-board APIs.
 
 ## Decision
 
-Use Google Custom Search API (Programmable Search Engine) with separate search engine configurations for job research and competitor checking.
+Use Brave Search API as the MVP live web research backend.
+
+The application exposes provider selection through `SEARCH_PROVIDER`, with `brave` as the intended live provider and `demo` as the safe fallback. The implementation keeps the existing normalized `SearchResult` boundary so another provider can be added without changing pipeline synthesis.
+
+Required runtime configuration:
+
+- `SEARCH_PROVIDER=brave`
+- `BRAVE_SEARCH_API_KEY`
+- Optional: `BRAVE_SEARCH_COUNTRY`, default `US`
+- Optional: `BRAVE_SEARCH_LANG`, default `en`
 
 ## Rationale
 
-- Google-native, consistent with the overall stack.
-- Programmable Search Engines (PSE) can be scoped to specific domains — job PSE targets LinkedIn, Indeed, jobs.ch, local boards; competitor PSE targets Product Hunt, G2, Crunchbase, app directories.
-- Domain-scoped searches produce more relevant results than open-web searches and reduce noise.
-- Pricing: 100 free queries/day; $5/1,000 after. A run uses 15–30 queries — cost per run is $0.075–$0.15. Acceptable.
-- No third-party dependency (vs. SerpAPI, which is a paid wrapper around Google results).
+- Brave returns structured JSON directly from its own independent web index.
+- The API supports web search, freshness filtering, country/language targeting, safe search, site operators, pagination, extra snippets, and AI-oriented context endpoints.
+- It is simpler for the MVP than Agent Search because it does not require pre-indexing curated website data stores.
+- It avoids depending on Google Custom Search API access for a new customer.
+- It is a cleaner fit than SerpAPI when the need is broad web discovery rather than Google-specific SERP modules.
 
-Playwright/browser automation was rejected: adds significant operational complexity (headless Chrome, anti-bot handling, maintenance), makes Cloud Run deployment harder, and is not needed for v1.
+## Why Not SerpAPI For MVP
 
-LinkedIn direct API was rejected: extremely restricted for job search use cases, requires partner status.
+SerpAPI is useful and also returns structured JSON, including `organic_results`, answer boxes, local results, knowledge graph data, news, images, shopping, and many Google-specific verticals. It is a good option if GapHunter later needs Google Jobs-style surfaces or many search engines behind one API.
 
-## What This Option Does NOT Do Well
+For the MVP, SerpAPI adds dependence on parsed Google SERPs and a monthly quota model. GapHunter's first live search path needs broad, source-linked web evidence more than rich Google SERP modules.
 
-- Content behind authentication (LinkedIn profile pages, paywalled databases, internal enterprise job boards) is not accessible. The search sees the public web only.
-- Google PSE does not guarantee freshness — pages may be indexed stale.
-- 100 free queries/day is consumed fast in testing. Set up billing from day one.
-- Coverage blind spots: non-indexed small sites, non-English content (important for Swiss German/French market), recently launched products (not yet indexed).
+## What This Option Does Not Do Well
+
+- It does not provide authenticated LinkedIn/job-board content.
+- It does not prove that no competitor exists; it only checks public indexed web results.
+- Search result quality may differ from Google for some local or vertical-specific queries.
+- The MVP still needs query tuning, caching, rate-limit handling, and source scoring.
 
 ## Consequences
 
-- Two PSE configurations must be created: one for job research (job board domains), one for competitor checking (product/startup directories).
-- All search results must include the source URL in the output — this is a hard requirement to prevent hallucination (see challenges.md, Challenge 11).
-- Search calls must be batched where possible and results cached to avoid burning the daily free quota during development.
-- The competitor check output must explicitly state "no obvious public competitor found in sources checked" rather than "no competitor exists."
+- All search results must continue to include source URLs. Results without URLs are dropped.
+- Competitor output must say that no obvious public competitor was found in searched sources, not that no competitor exists.
+- Runtime health stays in `demo` mode until `BRAVE_SEARCH_API_KEY` is configured.
+- The next production hardening step is caching search responses to control cost and latency.

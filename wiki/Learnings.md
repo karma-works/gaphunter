@@ -87,6 +87,6 @@ SerpAPI:
 
 Decision guidance:
 
-- Prefer Brave Search for the MVP live research backend. It is simpler, directly web-search oriented, AI-app friendly, and not tied to scraping Google SERPs.
+- Prefer Brave Search for the MVP live research backend. It is simpler, directly web-search oriented, AI-app friendly, and not tied to scraping Google SERPs. This decision is now recorded in [ADR-004](../specs/ADR-004-web-search.md).
 - Choose SerpAPI if GapHunter's quality depends on Google-specific result modules, especially jobs, maps/local, shopping, trends, or rich SERP features.
 - Implement the next search adapter with a provider setting, for example `SEARCH_PROVIDER=brave|serpapi|custom_search|demo`, so provider choice remains reversible.

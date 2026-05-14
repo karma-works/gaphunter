@@ -6,7 +6,7 @@
 |---|---|---|---|
 | LLM | Gemini 2.0 Flash + Gemini 2.5 Pro | Recommended | ADR-003 |
 | Agent framework | Google ADK (Python) | Recommended | ADR-002 |
-| Web search | Google Custom Search API (Programmable Search Engine) | Recommended | ADR-004 |
+| Web search | Brave Search API | Recommended | ADR-004 |
 | Runtime | Cloud Run (serverless) | Recommended | ADR-005 |
 | Storage | Firestore | Recommended | ADR-001 |
 | Auth | Firebase Auth + Google OAuth | Recommended | ADR-006 |
@@ -31,10 +31,11 @@
 - Trade-off accepted: two model calls per pipeline stage increases latency slightly; cost is manageable
 - Do NOT use a single model for everything. Flash on critique will produce generic objections. Pro on every search loop is wasteful.
 
-### Google Custom Search API
-- Programmable Search Engine (PSE) scoped to specific job board domains (LinkedIn, Indeed, local boards) and startup/product directories (Product Hunt, Crunchbase, G2)
-- 100 free queries/day; $5/1,000 after. Budget $0.10–$0.15 per full idea-generation run
-- Trade-off accepted: not as powerful as a full browser automation scraper; some content behind auth will be missed. Acceptable for v1.
+### Brave Search API
+- Structured JSON results from Brave's independent web index
+- Used for job research and competitor checks through a normalized `SearchResult` boundary
+- Supports country/language targeting, freshness filters, site operators, extra snippets, and AI-oriented context endpoints
+- Trade-off accepted: not as specialized as Google-specific SERP modules, but better suited to broad MVP web research than legacy Custom Search.
 
 ### Cloud Run
 - Serverless. No idle cost. Pay per request. Appropriate for a tool that runs on-demand, not continuously.
@@ -74,7 +75,7 @@
 | BigQuery | Not needed for v1. Run logs don't need analytical queries yet. Firestore is enough. |
 | Cloud SQL / AlloyDB | Relational database is wrong data model for variable-structure idea briefs. |
 | OpenAI / Anthropic APIs | User constraint: Google services. Also: Gemini 2.5 Pro is competitive on reasoning tasks and keeps the stack coherent. |
-| Browser automation (Playwright/Puppeteer) | Custom Search API is sufficient for v1. Browser automation adds operational complexity (headless Chrome on Cloud Run, anti-bot handling, maintenance burden). Add if Custom Search proves insufficient. |
+| Browser automation (Playwright/Puppeteer) | Brave Search API is sufficient for v1. Browser automation adds operational complexity (headless Chrome on Cloud Run, anti-bot handling, maintenance burden). Add only if API-backed search proves insufficient. |
 
 ---
 

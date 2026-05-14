@@ -7,19 +7,19 @@ Success criterion: agent returns ≥2 compelling, gap-confirmed ideas on 3 diffe
 ### Week 1 — Infrastructure and scaffolding
 
 - [ ] Create Google Cloud project, enable billing
-- [ ] Enable APIs: Gemini API, Custom Search API, Firestore, Firebase Auth, Secret Manager, Cloud Run, Cloud Build
-- [ ] Create two Programmable Search Engines (PSE): one for job research (jobs.ch, linkedin.com, indeed.com, ch.indeed.com), one for competitor checking (producthunt.com, g2.com, crunchbase.com, capterra.com)
+- [ ] Enable APIs: Gemini API, Firestore, Firebase Auth, Secret Manager, Cloud Run, Cloud Build
+- [ ] Create Brave Search API key for live web research
 - [ ] Create service account with least-privilege IAM roles (Firestore read/write, Secret Manager accessor)
-- [ ] Set up Secret Manager with: Gemini API key, Custom Search API key + PSE IDs, Firebase project credentials
+- [ ] Set up Secret Manager with: Gemini API key, Brave Search API key, Firebase project credentials
 - [ ] Initialize Python project: `uv` for package management, `pyproject.toml`, `Dockerfile`
 - [ ] Install ADK: `pip install google-adk`
 - [ ] Install Google agent skills: `npx skills add google/skills` → select `gemini-api`, `cloud-run-basics`, `google-cloud-recipe-auth`
-- [ ] Verify: call Gemini 2.0 Flash with a test prompt; call Custom Search API with a test query; confirm results
+- [ ] Verify: call Gemini 2.0 Flash with a test prompt; call Brave Search API with a test query; confirm results
 
 ### Week 2 — Core research pipeline
 
-- [ ] Implement `search_tool` ADK tool: wraps Custom Search API, returns list of `{title, snippet, url}` results
-- [ ] Implement `job_research_agent`: ADK Agent using Gemini 2.0 Flash, takes constraint parameters, generates search queries, calls `search_tool` against job PSE, extracts structured job descriptions
+- [ ] Implement `search_tool` ADK tool: wraps Brave Search API, returns list of `{title, snippet, url}` results
+- [ ] Implement `job_research_agent`: ADK Agent using Gemini 2.0 Flash, takes constraint parameters, generates search queries, calls `search_tool`, extracts structured job descriptions
 - [ ] Define `JobCandidate` Pydantic model: `{title, description, industry, source_url, estimated_salary_band, io_type, complexity_signal}`
 - [ ] Implement constraint filter: drop any `JobCandidate` without a `source_url` (hard requirement from challenges.md, Challenge 11)
 - [ ] Implement constraint parser: takes natural language user input, extracts structured constraint fields (geography, industry, exclusions, complexity threshold)
@@ -27,9 +27,9 @@ Success criterion: agent returns ≥2 compelling, gap-confirmed ideas on 3 diffe
 
 ### Week 3 — Competitor check pipeline
 
-- [ ] Implement `competitor_check_agent`: ADK Agent using Gemini 2.0 Flash, takes a `JobCandidate`, generates 3–5 search queries targeting "AI agent for [job type]" against competitor PSE
+- [ ] Implement `competitor_check_agent`: ADK Agent using Gemini 2.0 Flash, takes a `JobCandidate`, generates 3–5 search queries targeting "AI agent for [job type]"
 - [ ] Define `CompetitorCheckResult` model: `{job_title, competitors_found: list[{name, url, description}], gap_confirmed: bool, coverage_note: str}`
-- [ ] `coverage_note` must always be present: "Checked Product Hunt, G2, Crunchbase, Capterra via Google PSE as of [date]. Non-indexed and stealth products not covered."
+- [ ] `coverage_note` must always be present: "Checked public web results via Brave Search as of [date]. Non-indexed and stealth products not covered."
 - [ ] Implement deduplication: if two `JobCandidate` items map to the same competitor check result, merge them
 - [ ] Write tests: verify competitor check correctly identifies a known product (e.g., search for "AI agent for expense reporting" should return Brex/Ramp/similar)
 

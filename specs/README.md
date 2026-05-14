@@ -16,7 +16,7 @@ An AI agent that takes user constraints, researches real job markets and competi
 | [ADR-001-data-storage.md](ADR-001-data-storage.md) | Firestore as primary data store |
 | [ADR-002-agent-framework.md](ADR-002-agent-framework.md) | Google ADK (Python) as agent orchestration framework |
 | [ADR-003-llm-strategy.md](ADR-003-llm-strategy.md) | Gemini 2.0 Flash (research) + Gemini 2.5 Pro (synthesis + critique) |
-| [ADR-004-web-search.md](ADR-004-web-search.md) | Google Custom Search API with domain-scoped PSEs |
+| [ADR-004-web-search.md](ADR-004-web-search.md) | Brave Search API as MVP live web research backend |
 | [ADR-005-runtime.md](ADR-005-runtime.md) | Cloud Run for serverless deployment |
 | [ADR-006-auth.md](ADR-006-auth.md) | Firebase Auth + Google Sign-In |
 | [ADR-007-gtm-mvp-scope.md](ADR-007-gtm-mvp-scope.md) | Personal tool first, productize after output quality is validated |
@@ -26,7 +26,7 @@ An AI agent that takes user constraints, researches real job markets and competi
 
 - **Stack is Google-native**: ADK + Gemini + Cloud Run + Firestore + Firebase Auth — consistent, manageable, no third-party LLM or auth vendors
 - **Two-model LLM strategy**: Flash for research loops (speed + cost), Pro for synthesis and critique (quality where it matters)
-- **Domain-scoped search**: Two separate PSEs — one for job research, one for competitor checking
+- **Live web search**: Brave Search API for MVP job research and competitor checking
 - **Personal tool first**: No payment infrastructure until output quality is manually validated (Phase 0 success criterion: ≥70% of ideas pass manual review)
 - **Source URL is mandatory**: Every job and competitor result must include a source URL; results without one are dropped (anti-hallucination hard constraint)
 - **Scores are coverage, not confidence**: "Research coverage score" not "confidence score" — prevents founders from treating output as a green light to build

@@ -17,7 +17,7 @@ Use Google ADK (google/adk-python) as the agent orchestration framework.
 
 - ADK is Python-native and code-first — the pipeline is explicit code, not low-code config. This makes debugging tractable.
 - Multi-agent composition is built in. The critique layer can be a separate `Agent` that receives a brief and returns objections, called as a sub-agent from the main orchestrator.
-- Function calling / tool use is first-class. Wrapping the Custom Search API as an ADK tool is straightforward.
+- Function calling / tool use is first-class. Wrapping the Brave Search API as an ADK tool is straightforward.
 - ADK targets Vertex AI for managed deployment but runs locally and on Cloud Run without Vertex overhead — useful for keeping infra simple in v1.
 - Google-native: Gemini models are first-class in ADK, no adapter layers needed.
 

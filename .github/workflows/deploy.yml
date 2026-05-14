@@ -59,6 +59,8 @@ jobs:
           flags: "--allow-unauthenticated --timeout=600"
           env_vars: |-
             GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
+            SEARCH_PROVIDER=brave
+            BRAVE_SEARCH_API_KEY=${{ secrets.BRAVE_SEARCH_API_KEY }}
 
       - name: Show URL
         run: echo "${{ steps.deploy.outputs.url }}"

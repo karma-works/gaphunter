@@ -15,7 +15,7 @@ from app.models import (
     RunResult,
     SearchResult,
 )
-from app.search import SearchError, competitor_search, job_search
+from app.search import SearchError, competitor_search, job_search, search_provider_label
 from app.settings import settings
 
 
@@ -149,7 +149,7 @@ def build_job_query(constraints: ConstraintSet) -> str:
     parts = [
         constraints.geography or "",
         constraints.industry or "B2B",
-        "complex digital operations job posting",
+        "complex digital operations job posting role responsibilities",
     ]
     if constraints.complexity_threshold == "high":
         parts.append("senior specialist analyst")
@@ -157,7 +157,7 @@ def build_job_query(constraints: ConstraintSet) -> str:
 
 
 def build_competitor_query(candidate: JobCandidate) -> str:
-    return f"AI agent for {candidate.title}"
+    return f"AI agent software for {candidate.title}"
 
 
 def results_to_job_candidates(
@@ -183,13 +183,14 @@ def results_to_job_candidates(
 def check_competitors(candidate: JobCandidate) -> CompetitorCheckResult:
     checked_at = datetime.now(UTC).date().isoformat()
     competitors = competitor_search(build_competitor_query(candidate), limit=3)
+    provider = search_provider_label()
     return CompetitorCheckResult(
         job_title=candidate.title,
         competitors_found=competitors,
         gap_confirmed=not competitors,
         coverage_note=(
-            "Checked configured competitor Programmable Search Engine via Google Custom "
-            f"Search as of {checked_at}. Non-indexed and stealth products not covered."
+            f"Checked public web results via {provider} as of {checked_at}. "
+            "Non-indexed, private, and stealth products are not covered."
         ),
     )
 
@@ -234,8 +235,8 @@ def synthesize_live_ideas(
                     objections=[
                         "The current implementation has search evidence but not yet LLM-grounded extraction.",
                         (
-                            "Competitor coverage depends on the configured Programmable Search "
-                            "Engine and may miss non-indexed products."
+                            "Competitor coverage depends on the configured search provider "
+                            "and may miss non-indexed products."
                         ),
                     ],
                     severity="medium" if competitor_count else "low",

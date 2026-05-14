@@ -54,6 +54,10 @@ All variables are optional for local demo mode.
 | `GCP_PROJECT_ID` | Google Cloud project used for Firestore and deployed runtime metadata |
 | `FIRESTORE_COLLECTION` | Firestore collection for run results, default `runs` |
 | `GEMINI_API_KEY` | Gemini API key for future live synthesis and critique |
+| `SEARCH_PROVIDER` | Search backend, default `brave`; use `demo` to force demo mode |
+| `BRAVE_SEARCH_API_KEY` | Brave Search API key for live web research |
+| `BRAVE_SEARCH_COUNTRY` | Optional Brave country code, default `US` |
+| `BRAVE_SEARCH_LANG` | Optional Brave search language, default `en` |
 | `GOOGLE_CUSTOM_SEARCH_API_KEY` | Deprecated compatibility path for legacy Custom Search API accounts |
 | `JOB_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for job research |
 | `COMPETITOR_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for competitor checks |
@@ -73,10 +77,11 @@ Required repository secrets:
 
 - `GCP_WORKLOAD_IDENTITY_PROVIDER`
 - `GCP_SERVICE_ACCOUNT`
+- `BRAVE_SEARCH_API_KEY`, when live Brave-backed research should be enabled
 
 The target Google Cloud project must already have Cloud Run, Artifact Registry, IAM Credentials, Secret Manager, and Cloud Build APIs enabled.
 
-Custom Search API credentials are intentionally not wired into deployment. Google has closed Custom Search JSON API to new customers, so live search provider selection is tracked in the wiki learnings.
+Custom Search API credentials are intentionally not wired into deployment. Google has closed Custom Search JSON API to new customers, so live search uses Brave Search once `BRAVE_SEARCH_API_KEY` is configured.
 
 ## Documentation
 

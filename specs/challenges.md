@@ -32,7 +32,7 @@
 
 **Assumption:** Running 10–20 search queries per idea generation run is cheap and fast enough for a good UX.
 
-**Most likely failure mode:** Each run requires 15–30 searches (job research + competitor checks per candidate). Google Custom Search API costs $5 per 1,000 queries. A single run costs $0.10–$0.15 in search API calls alone. At scale, this compounds. Latency per run could be 3–8 minutes.
+**Most likely failure mode:** Each run requires 15–30 searches (job research + competitor checks per candidate). Brave Search API costs are request-based, so a single run can still become meaningful at scale if query fan-out is not controlled. Latency per run could be 3–8 minutes without batching, caching, and parallelism.
 
 **Failure consequence:** Margins collapse if the product is priced as pay-per-run at low price points. UX suffers if latency is too high for interactive use.
 
@@ -114,7 +114,7 @@
 
 ## Challenge 9: Google services dependency creates lock-in and cost risk
 
-**Assumption:** Google Custom Search + Vertex AI + Gemini is the right foundation and will remain cost-stable and available.
+**Assumption:** Brave Search + Google Cloud Run + Firestore + Gemini is the right foundation and will remain cost-stable and available.
 
 **Most likely failure mode:** Google deprecates or reprices a service (it happens), or rate limits hit during a peak usage period. Also: Vertex AI/Gemini is not the cheapest or fastest option for all tasks in the pipeline.
 

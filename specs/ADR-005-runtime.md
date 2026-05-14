@@ -36,6 +36,6 @@ Cloud Functions was rejected: 9-minute max timeout (2nd gen) is tight for a 5-mi
 ## Consequences
 
 - Dockerfile is the deployment artifact. Keep it simple: base Python image, pip install requirements, run Streamlit or Flask.
-- All secrets (Gemini API key, Custom Search API key, Firebase credentials) must be stored in Secret Manager and injected as environment variables at runtime. Never hardcode.
+- All secrets (Gemini API key, Brave Search API key, Firebase credentials) must be stored in Secret Manager and injected as environment variables at runtime. Never hardcode.
 - Request timeout must be set to at least 600 seconds in Cloud Run config to handle slow runs.
 - Min instances = 0 in v1 (cost optimization). Set to 1 if cold starts become a UX problem post-launch.
