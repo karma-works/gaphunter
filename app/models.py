@@ -28,6 +28,29 @@ class Evidence(BaseModel):
     note: str
 
 
+class SearchResult(BaseModel):
+    title: str
+    snippet: str
+    url: HttpUrl
+
+
+class JobCandidate(BaseModel):
+    title: str
+    description: str
+    industry: str | None = None
+    source_url: HttpUrl
+    estimated_salary_band: str | None = None
+    io_type: str = "digital"
+    complexity_signal: str = "medium"
+
+
+class CompetitorCheckResult(BaseModel):
+    job_title: str
+    competitors_found: list[SearchResult] = Field(default_factory=list)
+    gap_confirmed: bool
+    coverage_note: str
+
+
 class Critique(BaseModel):
     objections: list[str]
     severity: str
@@ -61,4 +84,3 @@ class RunResult(BaseModel):
 
     def firestore_dict(self) -> dict[str, Any]:
         return self.model_dump(mode="json")
-

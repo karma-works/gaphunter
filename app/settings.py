@@ -14,14 +14,16 @@ class Settings:
     competitor_search_engine_id: str | None = os.getenv("COMPETITOR_SEARCH_ENGINE_ID")
 
     @property
-    def live_research_enabled(self) -> bool:
+    def live_search_enabled(self) -> bool:
         return bool(
-            self.gemini_api_key
-            and self.custom_search_api_key
+            self.custom_search_api_key
             and self.job_search_engine_id
             and self.competitor_search_engine_id
         )
 
+    @property
+    def live_research_enabled(self) -> bool:
+        return self.live_search_enabled
+
 
 settings = Settings()
-

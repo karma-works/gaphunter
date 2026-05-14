@@ -6,10 +6,13 @@ GapHunter is an AI-assisted market gap research tool for founders. It takes a co
 
 The first implementation is a Cloud Run-ready FastAPI service. It runs in deterministic demo mode until Google API credentials are configured, which makes the app deployable and testable before Gemini, Google Custom Search, and Firestore are wired to real projects.
 
+Live demo: https://gaphunter-d2hympp5lq-oa.a.run.app
+
 ## Features
 
 - Constraint parsing from natural language prompts
 - Idea generation run endpoint and minimal browser UI
+- Google Custom Search-backed job and competitor research when credentials are configured
 - Source-backed idea brief schema
 - Adversarial critique and research coverage score fields
 - Firestore-ready persistence boundary with in-memory fallback
