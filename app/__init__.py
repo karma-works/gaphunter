@@ -1,0 +1,2 @@
+"""GapHunter application package."""
+

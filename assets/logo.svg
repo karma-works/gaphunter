@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">GapHunter logo</title>
+  <desc id="desc">A geometric scope mark finding a gap in a market grid.</desc>
+  <rect width="512" height="512" rx="96" fill="#0B1020"/>
+  <path d="M96 160C96 124.654 124.654 96 160 96H352C387.346 96 416 124.654 416 160V352C416 387.346 387.346 416 352 416H160C124.654 416 96 387.346 96 352V160Z" fill="#F8FAFC"/>
+  <path d="M152 184H360" stroke="#0B1020" stroke-width="24" stroke-linecap="round"/>
+  <path d="M152 256H248" stroke="#0B1020" stroke-width="24" stroke-linecap="round"/>
+  <path d="M312 256H360" stroke="#14B8A6" stroke-width="24" stroke-linecap="round"/>
+  <path d="M152 328H360" stroke="#0B1020" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="280" cy="256" r="64" stroke="#14B8A6" stroke-width="24"/>
+  <path d="M324 300L376 352" stroke="#14B8A6" stroke-width="24" stroke-linecap="round"/>
+</svg>
+
