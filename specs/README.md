@@ -22,6 +22,7 @@ An AI agent that takes user constraints, researches real job markets and competi
 | [ADR-007-gtm-mvp-scope.md](ADR-007-gtm-mvp-scope.md) | Personal tool first, productize after output quality is validated |
 | [ADR-008-agent-engine-orchestration.md](ADR-008-agent-engine-orchestration.md) | Cloud Run thin shell with Vertex AI Agent Engine orchestration |
 | [implementation-plan.md](implementation-plan.md) | Week-by-week Phase 0 plan + Phase 1/2 outlines |
+| [agent-engine-implementation-plan.md](agent-engine-implementation-plan.md) | Concrete migration plan for Agent Engine orchestration |
 
 ## Key decisions
 
