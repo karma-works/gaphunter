@@ -66,6 +66,44 @@ def test_live_search_pipeline_uses_search_results(monkeypatch) -> None:
     assert str(result.ideas[0].source_urls[0]) == "https://example.com/jobs/tender-ops"
 
 
+def test_run_pipeline_falls_back_to_demo_on_search_error(monkeypatch) -> None:
+    monkeypatch.setattr("app.pipeline.settings", SimpleNamespace(live_research_enabled=True))
+    monkeypatch.setattr("app.pipeline.job_search", lambda *a, **kw: (_ for _ in ()).throw(
+        __import__("app.search", fromlist=["SearchError"]).SearchError("API down")
+    ))
+
+    result = run_pipeline(RunRequest(prompt="Swiss B2B workflows"))
+
+    assert result.mode == "demo"
+    assert result.ideas
+
+
+def test_synthesize_live_ideas_with_competitors_found(monkeypatch) -> None:
+    from app.models import JobCandidate, CompetitorCheckResult
+    from app.pipeline import synthesize_live_ideas
+
+    candidate = JobCandidate(
+        title="Tender Ops Specialist",
+        description="Reviews tenders.",
+        source_url="https://example.com/job",
+    )
+    check = CompetitorCheckResult(
+        job_title="Tender Ops Specialist",
+        competitors_found=[
+            SearchResult(title="CompetitorA", snippet="Does this.", url="https://comp.example.com"),
+            SearchResult(title="CompetitorB", snippet="Does that.", url="https://comp2.example.com"),
+        ],
+        gap_confirmed=False,
+        coverage_note="Checked via Brave.",
+    )
+
+    ideas = synthesize_live_ideas([candidate], [check])
+
+    assert len(ideas) == 1
+    assert ideas[0].research_coverage_score < 0.72
+    assert ideas[0].research_coverage_score >= 0.35
+
+
 def test_brave_search_normalizes_web_results(monkeypatch) -> None:
     monkeypatch.setattr(
         "app.search.settings",

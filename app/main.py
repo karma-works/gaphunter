@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response
 
-from app.models import RunRequest, RunResult
+from app.models import RunRequest, RunStatusResponse
 from app.pipeline import run_pipeline
 from app.settings import settings
 from app.storage import store
@@ -19,14 +19,24 @@ def health() -> dict[str, str]:
     }
 
 
-@app.post("/runs", response_model=RunResult)
-def create_run(request: RunRequest) -> RunResult:
-    return store.save(run_pipeline(request))
+@app.post("/runs", response_model=RunStatusResponse)
+def create_run(request: RunRequest) -> RunStatusResponse:
+    queued = store.create_queued_run(request)
+    if queued.status != "queued":
+        return queued
+
+    try:
+        store.mark_running(queued.run_id)
+        store.append_event(queued.run_id, "running", "Research pipeline started.")
+        result = run_pipeline(request)
+        return store.complete_with_result(queued.run_id, result)
+    except Exception as exc:
+        return store.fail_with_error(queued.run_id, str(exc))
 
 
-@app.get("/runs/{run_id}", response_model=RunResult)
-def get_run(run_id: str) -> RunResult:
-    result = store.get(run_id)
+@app.get("/runs/{run_id}", response_model=RunStatusResponse)
+def get_run(run_id: str) -> RunStatusResponse:
+    result = store.get_status(run_id)
     if not result:
         raise HTTPException(status_code=404, detail="Run not found")
     return result
@@ -79,6 +89,9 @@ def index() -> str:
     const form = document.getElementById("run-form");
     const button = document.getElementById("submit");
     const results = document.getElementById("results");
+    function esc(s) {
+      return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+    }
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       button.disabled = true;
@@ -93,16 +106,16 @@ def index() -> str:
         const run = await response.json();
         results.innerHTML = run.ideas.map((idea) => `
           <article>
-            <h2>${idea.title}</h2>
-            <p>${idea.one_liner}</p>
-            <p><strong>Target:</strong> ${idea.target_customer}</p>
-            <p><strong>Job:</strong> ${idea.job_being_replaced}</p>
+            <h2>${esc(idea.title)}</h2>
+            <p>${esc(idea.one_liner)}</p>
+            <p><strong>Target:</strong> ${esc(idea.target_customer)}</p>
+            <p><strong>Job:</strong> ${esc(idea.job_being_replaced)}</p>
             <p class="score">Research coverage: ${Math.round(idea.research_coverage_score * 100)}%</p>
-            <p><strong>Critique:</strong> ${idea.critique.objections.join(" ")}</p>
+            <p><strong>Critique:</strong> ${idea.critique.objections.map(esc).join(" ")}</p>
           </article>
         `).join("");
       } catch (error) {
-        results.innerHTML = `<p class="error">${error.message}</p>`;
+        results.innerHTML = `<p class="error">${esc(error.message)}</p>`;
       } finally {
         button.disabled = false;
       }

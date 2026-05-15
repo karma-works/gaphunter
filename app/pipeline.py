@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 
 from app.models import (
@@ -18,6 +19,8 @@ from app.models import (
 from app.search import SearchError, competitor_search, job_search, search_provider_label
 from app.settings import settings
 
+
+MAX_CANDIDATES_PER_RUN = 3
 
 GEOGRAPHY_HINTS = {
     "switzerland": "Switzerland",
@@ -201,7 +204,7 @@ def synthesize_live_ideas(
     ideas: list[IdeaBrief] = []
     checks_by_title = {check.job_title: check for check in competitor_checks}
 
-    for candidate in candidates[:3]:
+    for candidate in candidates[:MAX_CANDIDATES_PER_RUN]:
         check = checks_by_title.get(candidate.title)
         competitor_count = len(check.competitors_found) if check else 0
         coverage_note = check.coverage_note if check else "Competitor coverage was not completed."
@@ -256,8 +259,11 @@ def generate_live_search_ideas(constraints: ConstraintSet) -> list[IdeaBrief]:
     candidates = results_to_job_candidates(job_results, constraints)
     if not candidates:
         return []
-    competitor_checks = [check_competitors(candidate) for candidate in candidates[:3]]
-    return synthesize_live_ideas(candidates, competitor_checks)
+    top_candidates = candidates[:MAX_CANDIDATES_PER_RUN]
+    with ThreadPoolExecutor(max_workers=MAX_CANDIDATES_PER_RUN) as pool:
+        futures = {pool.submit(check_competitors, c): c for c in top_candidates}
+        competitor_checks = [f.result() for f in as_completed(futures)]
+    return synthesize_live_ideas(top_candidates, competitor_checks)
 
 
 def run_pipeline(request: RunRequest) -> RunResult:
