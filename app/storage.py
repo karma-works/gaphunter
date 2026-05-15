@@ -201,31 +201,38 @@ class RunStore:
     def get_status(self, run_id: str) -> RunStatusResponse | None:
         cached = self._run_docs.get(run_id)
         # For non-terminal states, always re-read from Firestore so Agent Engine
-        # writes are visible without waiting for local transitions.
+        # writes are visible without waiting for local state transitions.
         if cached is not None and RunStatus(cached["status"]) not in _TERMINAL_STATUSES:
             if self._firestore_client:
-                snapshot = self._run_ref(run_id).get()
-                if snapshot.exists:
-                    doc = snapshot.to_dict()
-                    self._run_docs[run_id] = doc
-                    return self._response_from_doc(doc)
+                return self._fetch_from_firestore(run_id)
             return self._response_from_doc(cached)
 
         if cached is not None:
             return self._response_from_doc(cached)
 
         if self._firestore_client:
-            snapshot = self._run_ref(run_id).get()
-            if snapshot.exists:
-                doc = snapshot.to_dict()
-                self._run_docs[run_id] = doc
-                return self._response_from_doc(doc)
+            return self._fetch_from_firestore(run_id)
 
         result = self.get(run_id)
         if result:
             return RunStatusResponse.from_result(result, events=self._events[run_id])
 
         return None
+
+    def _fetch_from_firestore(self, run_id: str) -> RunStatusResponse | None:
+        snapshot = self._run_ref(run_id).get()
+        if not snapshot.exists:
+            return None
+        doc = snapshot.to_dict()
+        self._run_docs[run_id] = doc
+        # Load events from Firestore subcollection if not cached locally.
+        if not self._events[run_id]:
+            fs_events = [
+                ProgressEvent.model_validate(e.to_dict())
+                for e in self._run_ref(run_id).collection("events").order_by("sequence").stream()
+            ]
+            self._events[run_id].extend(fs_events)
+        return self._response_from_doc(doc)
 
     def _transition(
         self,

@@ -4,18 +4,22 @@ import argparse
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Deploy the GapHunter Agent Engine spike.")
+    parser = argparse.ArgumentParser(description="Deploy the GapHunter Agent Engine.")
     parser.add_argument("--project", default="gaphunter-496315")
     parser.add_argument("--location", default="us-central1")
     parser.add_argument(
         "--staging-bucket",
         default="gs://gaphunter-agent-engine-staging-519220506089",
     )
-    parser.add_argument("--display-name", default="gaphunter-agent-engine-spike")
+    parser.add_argument("--display-name", default="gaphunter-agent-engine")
+    parser.add_argument("--brave-search-api-key", default=None)
+    parser.add_argument("--gemini-api-key", default=None)
     return parser.parse_args()
 
 
 def main() -> None:
+    import os
+
     args = parse_args()
 
     import vertexai
@@ -28,13 +32,25 @@ def main() -> None:
         location=args.location,
         staging_bucket=args.staging_bucket,
     )
+
+    env_vars: dict[str, str] = {
+        "GCP_PROJECT_ID": args.project,
+        "FIRESTORE_COLLECTION": "runs",
+    }
+    brave_key = args.brave_search_api_key or os.getenv("BRAVE_SEARCH_API_KEY")
+    gemini_key = args.gemini_api_key or os.getenv("GEMINI_API_KEY")
+    if brave_key:
+        env_vars["BRAVE_SEARCH_API_KEY"] = brave_key
+    if gemini_key:
+        env_vars["GEMINI_API_KEY"] = gemini_key
+
     remote_agent = agent_engines.create(
         root_agent,
         requirements="agent/requirements.txt",
         extra_packages=["agent"],
-        env_vars={"GCP_PROJECT_ID": args.project, "FIRESTORE_COLLECTION": "runs"},
+        env_vars=env_vars,
         display_name=args.display_name,
-        description="GapHunter deterministic Agent Engine deployment spike.",
+        description="GapHunter research agent — Phase 6a.",
     )
     print(remote_agent.resource_name)
 
