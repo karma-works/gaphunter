@@ -199,8 +199,20 @@ class RunStore:
         return []
 
     def get_status(self, run_id: str) -> RunStatusResponse | None:
-        if run_id in self._run_docs:
-            return self._response_from_doc(self._run_docs[run_id])
+        cached = self._run_docs.get(run_id)
+        # For non-terminal states, always re-read from Firestore so Agent Engine
+        # writes are visible without waiting for local transitions.
+        if cached is not None and RunStatus(cached["status"]) not in _TERMINAL_STATUSES:
+            if self._firestore_client:
+                snapshot = self._run_ref(run_id).get()
+                if snapshot.exists:
+                    doc = snapshot.to_dict()
+                    self._run_docs[run_id] = doc
+                    return self._response_from_doc(doc)
+            return self._response_from_doc(cached)
+
+        if cached is not None:
+            return self._response_from_doc(cached)
 
         if self._firestore_client:
             snapshot = self._run_ref(run_id).get()

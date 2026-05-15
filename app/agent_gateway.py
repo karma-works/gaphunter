@@ -84,7 +84,16 @@ class AgentEngineGateway:
 
     def _invoke(self, run_id: str, request: RunRequest) -> None:
         try:
+            import vertexai
             from vertexai import agent_engines
+
+            # Extract project and location from the resource name so vertexai.init()
+            # does not need separate env vars in Cloud Run.
+            # Resource format: projects/{project}/locations/{location}/reasoningEngines/{id}
+            parts = self._resource_name.split("/")
+            project = parts[1] if len(parts) > 1 else None
+            location = parts[3] if len(parts) > 3 else "us-central1"
+            vertexai.init(project=project, location=location)
 
             remote_agent = agent_engines.get(self._resource_name)
             remote_agent.query(
@@ -93,6 +102,8 @@ class AgentEngineGateway:
                 max_search_queries=self._max_search_queries,
                 max_gemini_calls=self._max_gemini_calls,
             )
+            # Sync the in-memory store so the next GET doesn't need a Firestore round-trip.
+            self._store.get_status(run_id)
         except Exception as exc:
             logger.exception("AgentEngineGateway invocation failed for run %s", run_id)
             try:
