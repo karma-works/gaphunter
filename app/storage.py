@@ -24,6 +24,7 @@ class RunStore:
         self._memory: OrderedDict[str, RunResult] = OrderedDict()
         self._run_docs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         self._events: defaultdict[str, list[ProgressEvent]] = defaultdict(list)
+        self._events_loaded: set[str] = set()
         self._sources: defaultdict[str, list[SourceEvidence]] = defaultdict(list)
         self._idempotency_keys: dict[str, str] = {}
         self._firestore_client = None
@@ -225,8 +226,9 @@ class RunStore:
             return None
         doc = snapshot.to_dict()
         self._run_docs[run_id] = doc
-        # Load events from Firestore subcollection if not cached locally.
-        if not self._events[run_id]:
+        # Load events from Firestore subcollection exactly once per run.
+        if run_id not in self._events_loaded:
+            self._events_loaded.add(run_id)
             fs_events = [
                 ProgressEvent.model_validate(e.to_dict())
                 for e in self._run_ref(run_id).collection("events").order_by("sequence").stream()
