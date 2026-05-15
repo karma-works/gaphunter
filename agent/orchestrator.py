@@ -182,6 +182,10 @@ def _build_job_query(constraints: dict) -> str:
     return " ".join(p for p in parts if p).strip()
 
 
+def _build_competitor_query(candidate: dict) -> str:
+    return f"AI agent software for {candidate['title']}"
+
+
 def _results_to_candidates(results: list[dict], constraints: dict) -> list[dict]:
     """Maps search results to job candidate dicts. Drops any result without a URL."""
     candidates = []
@@ -201,8 +205,32 @@ def _results_to_candidates(results: list[dict], constraints: dict) -> list[dict]
     return candidates
 
 
+def _build_competitor_check(candidate: dict, results: list[dict]) -> dict:
+    competitors = [
+        {
+            "title": result["title"],
+            "url": result["url"],
+            "snippet": result.get("snippet", ""),
+            "query": result.get("query"),
+        }
+        for result in results
+        if result.get("url") and result.get("title")
+    ]
+    checked_at = datetime.now(timezone.utc).date().isoformat()
+    return {
+        "job_title": candidate["title"],
+        "competitors_found": competitors,
+        "gap_confirmed": not competitors,
+        "coverage_note": (
+            f"Checked public web results via Brave Search as of {checked_at}. "
+            "Non-indexed, private, and stealth products are not covered."
+        ),
+    }
+
+
 def _candidates_to_ideas_and_sources(
     candidates: list[dict],
+    competitor_checks: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
     Phase 6a synthesis: maps job candidates to IdeaBriefs without competitor checks.
@@ -210,8 +238,16 @@ def _candidates_to_ideas_and_sources(
     """
     ideas = []
     sources = []
+    checks_by_title = {
+        check["job_title"]: check
+        for check in (competitor_checks or [])
+    }
     for candidate in candidates[:_MAX_CANDIDATES]:
         url = candidate["source_url"]
+        check = checks_by_title.get(candidate["title"], {})
+        competitors = check.get("competitors_found", [])
+        gap_confirmed = bool(check.get("gap_confirmed", False))
+        source_urls = [url] + [competitor["url"] for competitor in competitors]
         sources.append({
             "url": url,
             "title": candidate["title"],
@@ -219,6 +255,22 @@ def _candidates_to_ideas_and_sources(
             "provider": "brave",
             "query": candidate.get("query"),
         })
+        for competitor in competitors:
+            sources.append({
+                "url": competitor["url"],
+                "title": competitor["title"],
+                "snippet": competitor.get("snippet", ""),
+                "provider": "brave",
+                "query": competitor.get("query"),
+            })
+        competitor_note = (
+            "No direct AI-agent competitors found in public search results."
+            if gap_confirmed
+            else (
+                f"Found {len(competitors)} possible existing competitor"
+                f"{'' if len(competitors) == 1 else 's'}."
+            )
+        )
         ideas.append({
             "title": f"{candidate['title']} Agent",
             "one_liner": (
@@ -229,29 +281,42 @@ def _candidates_to_ideas_and_sources(
                 candidate.get("industry") or "B2B teams with document-heavy operations"
             ),
             "job_being_replaced": candidate["title"],
+            "gap_confirmed": gap_confirmed,
             "gap_evidence": [
                 {
                     "label": "Job-market source",
                     "url": url,
                     "note": candidate["description"][:240],
+                },
+                {
+                    "label": "Competitor coverage",
+                    "url": source_urls[-1],
+                    "note": f"{competitor_note} {check.get('coverage_note', '')}".strip(),
                 }
             ],
-            "source_urls": [url],
+            "source_urls": source_urls,
             "ai_feasibility_note": (
                 "Candidate identified because the source describes repeatable knowledge-work "
                 "inputs suitable for AI-assisted processing."
             ),
             "critique": {
                 "objections": [
-                    "Competitor coverage not yet verified — manual check recommended.",
+                    (
+                        "Competitor coverage found possible existing tools; differentiation "
+                        "needs manual validation."
+                        if competitors else
+                        "Public competitor search found no direct tools, but non-indexed "
+                        "products may still exist."
+                    ),
                     "Market size and buyer WTP require validation beyond job-board signals.",
                 ],
                 "severity": "medium",
             },
-            "research_coverage_score": 0.55,
+            "research_coverage_score": 0.68 if gap_confirmed else max(0.35, 0.62 - len(competitors) * 0.08),
             "score_rationale": (
-                "Phase 6a score: job-market signal found via live search. "
-                "Competitor check pending (Phase 6b)."
+                f"Phase 6b score: one job-market source and {len(competitors)} "
+                f"competitor-search result{'' if len(competitors) == 1 else 's'}. "
+                f"{check.get('coverage_note', '')}"
             ),
         })
     return ideas, sources
@@ -347,11 +412,28 @@ class GapHunterAgent:
         results = brave_search(query, brave_key, limit=5)
         return _results_to_candidates(results, constraints)
 
+    def _competitor_agent(
+        self, candidates: list[dict], budget: _RunBudget, brave_key: str
+    ) -> list[dict]:
+        """Search for existing AI products for each job candidate."""
+        from agent.tools.search import brave_search
+
+        checks = []
+        for candidate in candidates[:_MAX_CANDIDATES]:
+            budget.consume_search()
+            query = _build_competitor_query(candidate)
+            results = brave_search(query, brave_key, limit=3)
+            checks.append(_build_competitor_check(candidate, results))
+        return checks
+
     def _finalizer(
-        self, candidates: list[dict], constraints: dict
+        self,
+        candidates: list[dict],
+        constraints: dict,
+        competitor_checks: list[dict] | None = None,
     ) -> tuple[list[dict], list[dict]]:
         """Build IdeaBriefs from candidates. Validates every idea has a source URL."""
-        ideas, sources = _candidates_to_ideas_and_sources(candidates)
+        ideas, sources = _candidates_to_ideas_and_sources(candidates, competitor_checks)
         for idea in ideas:
             if not idea.get("source_urls"):
                 raise RuntimeError(
@@ -397,10 +479,15 @@ class GapHunterAgent:
                 )
 
             self._store.append_event(
+                run_id, "checking_competitors", "Checking for existing AI products..."
+            )
+            competitor_checks = self._competitor_agent(candidates, budget, brave_key)
+
+            self._store.append_event(
                 run_id, "synthesizing_ideas",
                 f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
             )
-            ideas, sources = self._finalizer(candidates, constraints)
+            ideas, sources = self._finalizer(candidates, constraints, competitor_checks)
 
             from app.models import SourceEvidence
             for src in sources:
@@ -482,11 +569,14 @@ class GapHunterAgent:
                     "Try broadening your constraints or check BRAVE_SEARCH_API_KEY."
                 )
 
+            emit("checking_competitors", "Checking for existing AI products...")
+            competitor_checks = self._competitor_agent(candidates, budget, brave_key)
+
             emit(
                 "synthesizing_ideas",
                 f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
             )
-            ideas, sources = self._finalizer(candidates, constraints)
+            ideas, sources = self._finalizer(candidates, constraints, competitor_checks)
 
             for src in sources:
                 source_doc = {

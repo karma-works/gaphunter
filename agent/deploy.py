@@ -50,7 +50,7 @@ def main() -> None:
         extra_packages=["agent"],
         env_vars=env_vars,
         display_name=args.display_name,
-        description="GapHunter research agent — Phase 6a.",
+        description="GapHunter research agent — Phase 6b.",
     )
     print(remote_agent.resource_name)
 

@@ -81,6 +81,7 @@ class IdeaBrief(BaseModel):
     one_liner: str
     target_customer: str
     job_being_replaced: str
+    gap_confirmed: bool | None = None
     gap_evidence: list[Evidence]
     source_urls: list[HttpUrl]
     ai_feasibility_note: str

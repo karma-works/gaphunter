@@ -26,6 +26,25 @@ Last checked: 2026-05-15
 The Phase 4 Agent Engine spike passed. A deterministic Agent Engine was deployed, invoked, and
 verified to write a completed `RunResult` plus a progress event to Firestore.
 
+## Phase 6b Deployment Note
+
+Phase 6b competitor-analysis logic is implemented and passes local tests. A redeploy attempt
+for display name `gaphunter-agent-engine` started operation
+`projects/519220506089/locations/us-central1/reasoningEngines/1327115482527956992/operations/941454658029748224`
+but the local SDK client timed out after 900 seconds. The resource was not listed afterward
+and no matching logs were returned, so that redeploy is not considered verified.
+
+Known listed Agent Engine resources after the timeout:
+
+- `projects/519220506089/locations/us-central1/reasoningEngines/4105273502662131712`
+  (`gaphunter-agent-engine`)
+- `projects/519220506089/locations/us-central1/reasoningEngines/2541398532057726976`
+  (`gaphunter-agent-engine-6a`)
+- `projects/519220506089/locations/us-central1/reasoningEngines/5394428895996936192`
+  (`gaphunter-agent-engine-spike`)
+- `projects/519220506089/locations/us-central1/reasoningEngines/119587832439242752`
+  (`gaphunter-agent-engine-spike`)
+
 ## Verified Project State
 
 - Project ID: `gaphunter-496315`

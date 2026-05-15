@@ -5,6 +5,8 @@ import pytest
 from agent.orchestrator import (
     GapHunterAgent,
     _RunBudget,
+    _build_competitor_check,
+    _build_competitor_query,
     _candidates_to_ideas_and_sources,
     _regex_parse_constraints,
     _results_to_candidates,
@@ -92,6 +94,72 @@ def test_candidates_to_ideas_and_sources_all_ideas_have_source_urls():
     assert sources[0]["url"] == "https://example.com/job1"
 
 
+def test_build_competitor_query_targets_job_title():
+    query = _build_competitor_query({"title": "Compliance Analyst"})
+
+    assert query == "AI agent software for Compliance Analyst"
+
+
+def test_build_competitor_check_marks_gap_confirmed_when_no_competitors():
+    check = _build_competitor_check({"title": "Compliance Analyst"}, [])
+
+    assert check["job_title"] == "Compliance Analyst"
+    assert check["gap_confirmed"] is True
+    assert "Brave Search" in check["coverage_note"]
+
+
+def test_build_competitor_check_keeps_competitor_sources():
+    check = _build_competitor_check(
+        {"title": "Compliance Analyst"},
+        [
+            {
+                "title": "Existing Tool",
+                "url": "https://competitor.example.com",
+                "snippet": "Automates compliance.",
+                "query": "AI agent software for Compliance Analyst",
+            }
+        ],
+    )
+
+    assert check["gap_confirmed"] is False
+    assert check["competitors_found"][0]["url"] == "https://competitor.example.com"
+
+
+def test_candidates_to_ideas_include_competitor_evidence_and_sources():
+    candidates = [
+        {
+            "title": "Compliance Analyst",
+            "description": "Reviews regulatory documents.",
+            "industry": "Finance",
+            "source_url": "https://example.com/job1",
+            "io_type": "digital",
+            "complexity_signal": "high",
+            "query": "Switzerland B2B",
+        }
+    ]
+    checks = [
+        {
+            "job_title": "Compliance Analyst",
+            "competitors_found": [
+                {
+                    "title": "Existing Tool",
+                    "url": "https://competitor.example.com",
+                    "snippet": "Automates compliance.",
+                    "query": "AI agent software for Compliance Analyst",
+                }
+            ],
+            "gap_confirmed": False,
+            "coverage_note": "Checked public web results via Brave Search.",
+        }
+    ]
+
+    ideas, sources = _candidates_to_ideas_and_sources(candidates, checks)
+
+    assert ideas[0]["gap_confirmed"] is False
+    assert "https://competitor.example.com" in ideas[0]["source_urls"]
+    assert any(source["url"] == "https://competitor.example.com" for source in sources)
+
+
 def test_candidates_to_ideas_caps_at_three():
     candidates = [
         {"title": f"Job {i}", "description": "desc", "source_url": f"https://example.com/{i}"}
@@ -176,7 +244,7 @@ def test_run_with_brave_search_produces_source_backed_ideas(monkeypatch):
     monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "fake-key")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
 
-    fake_results = [
+    fake_job_results = [
         {
             "title": "Compliance Intake Analyst",
             "url": "https://example.com/job1",
@@ -190,7 +258,20 @@ def test_run_with_brave_search_produces_source_backed_ideas(monkeypatch):
             "query": "Switzerland B2B compliance",
         },
     ]
-    monkeypatch.setattr("agent.tools.search.brave_search", lambda *a, **kw: fake_results)
+
+    def fake_brave_search(query, *args, **kwargs):
+        if query.startswith("AI agent software for"):
+            return [
+                {
+                    "title": "Existing Agent",
+                    "url": "https://competitor.example.com",
+                    "snippet": "Automates a related workflow.",
+                    "query": query,
+                }
+            ]
+        return fake_job_results
+
+    monkeypatch.setattr("agent.tools.search.brave_search", fake_brave_search)
 
     store = RunStore()
     queued = store.create_queued_run(RunRequest(prompt="Swiss B2B workflows"))
@@ -204,10 +285,40 @@ def test_run_with_brave_search_produces_source_backed_ideas(monkeypatch):
     assert len(status.ideas) == 2
     for idea in status.ideas:
         assert idea.source_urls, "Every idea must have at least one source URL"
+        assert idea.gap_confirmed is False
+        assert "https://competitor.example.com/" in [str(url) for url in idea.source_urls]
     stages = [e.stage for e in status.events]
     assert "parsing_constraints" in stages
     assert "researching_jobs" in stages
+    assert "checking_competitors" in stages
     assert "synthesizing_ideas" in stages
+
+
+def test_run_fails_when_competitor_search_exhausts_budget(monkeypatch):
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "fake-key")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.setattr(
+        "agent.tools.search.brave_search",
+        lambda *a, **kw: [
+            {
+                "title": "Compliance Analyst",
+                "url": "https://example.com/job1",
+                "snippet": "Reviews regulatory documents.",
+                "query": "Switzerland B2B",
+            }
+        ],
+    )
+
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B workflows"))
+    agent = GapHunterAgent(store)
+
+    response = agent.run(queued.run_id, "Swiss B2B workflows", max_search_queries=1)
+
+    status = store.get_status(queued.run_id)
+    assert response["status"] == "failed"
+    assert status.status == RunStatus.FAILED
+    assert "search query budget exhausted" in status.error
 
 
 def test_run_fails_when_search_returns_no_candidates(monkeypatch):
