@@ -77,7 +77,7 @@ class AgentEngineGateway:
         thread = threading.Thread(
             target=self._invoke,
             args=(run_id, request),
-            daemon=True,
+            daemon=False,
             name=f"agent-engine-{run_id[:8]}",
         )
         thread.start()
