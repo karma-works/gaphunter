@@ -4,9 +4,8 @@
 
 Last checked: 2026-05-15
 
-The Phase 4 Agent Engine spike has started but is not complete. The project is configured for
-the spike, but deployment is blocked until Application Default Credentials are available locally
-and the Reasoning Engine service agent is granted Firestore write access.
+The Phase 4 Agent Engine spike passed. A deterministic Agent Engine was deployed, invoked, and
+verified to write a completed `RunResult` plus a progress event to Firestore.
 
 ## Verified Project State
 
@@ -15,6 +14,11 @@ and the Reasoning Engine service agent is granted Firestore write access.
 - Active `gcloud` account: `chris.haegele@gmail.com`
 - Vertex AI API: enabled during the spike
 - Vertex AI service identity: generated during the spike
+- Reasoning Engine service agent Firestore role: granted `roles/datastore.user`
+- Agent Engine staging bucket: `gs://gaphunter-agent-engine-staging-519220506089`
+- Deployed spike resource:
+  `projects/519220506089/locations/us-central1/reasoningEngines/119587832439242752`
+- Firestore verification run: `22a6082278404eaa8a57dec7778fc2ef`
 
 Enabled services observed before enabling Vertex AI included:
 
@@ -31,13 +35,19 @@ Enabled services observed before enabling Vertex AI included:
 - `storage.googleapis.com`
 - `telemetry.googleapis.com`
 
-## Blockers
+## Completed Setup
 
 ### Application Default Credentials
 
-No local `application_default_credentials.json` file was present under the Cloud SDK config.
-The Agent Platform Python SDK uses ADC, so local deployment cannot proceed until ADC is
-configured.
+The Agent Platform Python SDK uses ADC. For this environment, ADC was configured under:
+
+```text
+/tmp/gcloud-config/application_default_credentials.json
+```
+
+The quota project is `gaphunter-496315`.
+
+To refresh these credentials if they expire, run:
 
 Run:
 
@@ -55,7 +65,7 @@ export CLOUDSDK_CONFIG=/tmp/gcloud-config
 ### Firestore IAM Grant
 
 Phase 4 requires Agent Engine to write directly to Firestore. The Reasoning Engine service
-agent must receive `roles/datastore.user` on the project:
+agent received `roles/datastore.user` on the project:
 
 ```bash
 gcloud projects add-iam-policy-binding gaphunter-496315 \
@@ -64,30 +74,34 @@ gcloud projects add-iam-policy-binding gaphunter-496315 \
   --condition=None
 ```
 
-This is a persistent project-level IAM change and should be approved explicitly before running.
-
 ## Deployment Approach
 
-Use inline source deployment for the first hello-world spike. Google documentation currently
-supports deploying from local source files with `client.agent_engines.create` using:
+The installed `google-cloud-aiplatform==1.153.1` SDK exposes the object deployment API:
 
-- `source_packages`
-- `entrypoint_module`
-- `entrypoint_object`
-- `class_methods`
-- optional `requirements_file`
+```python
+import vertexai
+from vertexai import agent_engines
 
-For the first deployable spike, keep the source package minimal and expose a single method
-that returns a deterministic response. Only after this deploy/invoke path works should the
-repo add the `agent/` package and Firestore-writing orchestrator.
+vertexai.init(project=..., location=..., staging_bucket=...)
+agent_engines.create(root_agent, requirements=..., extra_packages=...)
+```
+
+The docs also describe newer inline source deployment via `vertexai.Client(...).agent_engines`,
+but that API was not available in the installed SDK. The successful spike used object deployment
+with `extra_packages=["agent"]`.
+
+Do not include the top-level Cloud Run `app` package in `extra_packages` with this legacy path:
+it shadows Agent Runtime's internal `/code/app` package and causes startup failures.
 
 ## Shared Schema Strategy
 
-When Phase 4 proceeds past the spike gate, use `app.models` as the shared schema package for
-the initial Agent Engine implementation. This keeps Cloud Run and Agent Engine validating
-against the exact same `RunResult`, `RunStatusResponse`, `ProgressEvent`, and `SourceEvidence`
-models. Revisit a dedicated `gaphunter_models` package only if deployment packaging or import
-boundaries become a real problem.
+For local tests, `agent.orchestrator` validates deterministic output with `app.models`.
+For deployed runtime, the agent package is self-contained and writes schema-compatible Firestore
+documents directly to avoid the `app` package name collision described above.
+
+Before Phase 6 writes more complex outputs, consider extracting `app.models` into a neutral
+package such as `gaphunter_models` so Cloud Run and Agent Engine can import shared models
+without colliding with Agent Runtime internals.
 
 ## Local Development Loop
 

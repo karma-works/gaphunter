@@ -185,7 +185,7 @@ class RunStore:
         if not self.get_status(run_id):
             return None
 
-        if run_id in self._events:
+        if run_id in self._events and self._events[run_id]:
             return list(self._events[run_id])
 
         if self._firestore_client:
