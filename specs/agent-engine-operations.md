@@ -1,5 +1,24 @@
 # Agent Engine Operations
 
+## Phase 5 Status
+
+`AgentEngineGateway` is implemented in `app/agent_gateway.py`. Set the following env vars to
+enable it on Cloud Run:
+
+```bash
+AGENT_BACKEND=agent_engine
+AGENT_ENGINE_RESOURCE_NAME=projects/519220506089/locations/us-central1/reasoningEngines/119587832439242752
+MAX_SEARCH_QUERIES_PER_RUN=20   # cost kill switch — abort if exceeded
+MAX_GEMINI_CALLS_PER_RUN=50     # cost kill switch — abort if exceeded
+```
+
+The gateway fires a daemon thread and returns immediately. The Agent Engine orchestrator
+writes all state transitions directly to Firestore. Set `AGENT_BACKEND=local` to roll back
+to the synchronous in-process pipeline.
+
+Cloud Run needs `roles/aiplatform.user` on the project to invoke Agent Engine. Verify before
+switching `AGENT_BACKEND=agent_engine` in production.
+
 ## Phase 4 Spike Status
 
 Last checked: 2026-05-15

@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.agent_gateway import FakeAgentGateway, LocalPipelineAgentGateway, build_agent_gateway
+from app.agent_gateway import AgentEngineGateway, FakeAgentGateway, LocalPipelineAgentGateway, build_agent_gateway
 from app.models import ConstraintSet, Critique, Evidence, IdeaBrief, RunRequest, RunResult, RunStatus
 from app.storage import RunStore
 
@@ -92,6 +92,67 @@ def test_build_agent_gateway_rejects_unknown_backend():
         build_agent_gateway("missing", RunStore())
 
 
-def test_agent_engine_backend_is_not_implemented_yet():
-    with pytest.raises(NotImplementedError, match="Phase 5"):
+def test_agent_engine_backend_requires_resource_name():
+    with pytest.raises(ValueError, match="AGENT_ENGINE_RESOURCE_NAME"):
         build_agent_gateway("agent_engine", RunStore())
+
+
+def test_agent_engine_gateway_invoke_calls_remote_agent(monkeypatch):
+    calls = []
+
+    class _FakeRemoteAgent:
+        def query(self, **kwargs):
+            calls.append(kwargs)
+
+    monkeypatch.setattr("vertexai.agent_engines.get", lambda name: _FakeRemoteAgent())
+
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
+    gateway = AgentEngineGateway(
+        "projects/123/locations/us-central1/reasoningEngines/456",
+        store,
+        max_search_queries=5,
+        max_gemini_calls=10,
+    )
+
+    gateway._invoke(queued.run_id, RunRequest(prompt="Swiss B2B"))
+
+    assert calls[0]["run_id"] == queued.run_id
+    assert calls[0]["prompt"] == "Swiss B2B"
+    assert calls[0]["max_search_queries"] == 5
+    assert calls[0]["max_gemini_calls"] == 10
+
+
+def test_agent_engine_gateway_writes_failed_on_invocation_error(monkeypatch):
+    monkeypatch.setattr(
+        "vertexai.agent_engines.get",
+        lambda name: (_ for _ in ()).throw(RuntimeError("network error")),
+    )
+
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
+    gateway = AgentEngineGateway("fake-resource", store)
+
+    gateway._invoke(queued.run_id, RunRequest(prompt="Swiss B2B"))
+
+    status = store.get_status(queued.run_id)
+    assert status.status == RunStatus.FAILED
+    assert "network error" in status.error
+
+
+def test_agent_engine_gateway_start_run_spawns_thread(monkeypatch):
+    import threading
+
+    invoked = threading.Event()
+
+    def fake_invoke(run_id, request):
+        invoked.set()
+
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
+    gateway = AgentEngineGateway("fake-resource", store)
+    monkeypatch.setattr(gateway, "_invoke", fake_invoke)
+
+    gateway.start_run(queued.run_id, RunRequest(prompt="Swiss B2B"))
+
+    assert invoked.wait(timeout=2)

@@ -53,11 +53,16 @@ All variables are optional for local demo mode.
 |---|---|
 | `GCP_PROJECT_ID` | Google Cloud project used for Firestore and deployed runtime metadata |
 | `FIRESTORE_COLLECTION` | Firestore collection for run results, default `runs` |
-| `GEMINI_API_KEY` | Gemini API key for future live synthesis and critique |
+| `GEMINI_API_KEY` | Gemini API key for live synthesis and critique |
 | `SEARCH_PROVIDER` | Search backend, default `brave`; use `demo` to force demo mode |
 | `BRAVE_SEARCH_API_KEY` | Brave Search API key for live web research |
 | `BRAVE_SEARCH_COUNTRY` | Optional Brave country code, default `US` |
 | `BRAVE_SEARCH_LANG` | Optional Brave search language, default `en` |
+| `AGENT_BACKEND` | Execution backend: `local` (default), `agent_engine`, or `fake` |
+| `AGENT_ENGINE_RESOURCE_NAME` | Full Vertex AI Agent Engine resource name; required when `AGENT_BACKEND=agent_engine` |
+| `AGENT_ENGINE_LOCATION` | Vertex AI region for Agent Engine, default `us-central1` |
+| `MAX_SEARCH_QUERIES_PER_RUN` | Per-run Brave Search query budget (kill switch), default `20` |
+| `MAX_GEMINI_CALLS_PER_RUN` | Per-run Gemini API call budget (kill switch), default `50` |
 | `GOOGLE_CUSTOM_SEARCH_API_KEY` | Deprecated compatibility path for legacy Custom Search API accounts |
 | `JOB_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for job research |
 | `COMPETITOR_SEARCH_ENGINE_ID` | Deprecated Programmable Search Engine ID for competitor checks |

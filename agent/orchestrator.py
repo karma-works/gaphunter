@@ -1,15 +1,77 @@
 from __future__ import annotations
 
+import logging
 import os
+import re
 import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
+
+logger = logging.getLogger(__name__)
+
+_MAX_CANDIDATES = 3
+
+_GEOGRAPHY_HINTS = {
+    "switzerland": "Switzerland",
+    "swiss": "Switzerland",
+    "dach": "DACH",
+    "germany": "Germany",
+    "austria": "Austria",
+    "europe": "Europe",
+    "us": "United States",
+    "usa": "United States",
+}
+
+_INDUSTRY_HINTS = {
+    "fintech": "Financial services",
+    "finance": "Financial services",
+    "health": "Healthcare",
+    "insurance": "Insurance",
+    "legal": "Legal services",
+    "logistics": "Logistics",
+    "construction": "Construction",
+    "manufacturing": "Manufacturing",
+    "real estate": "Real estate",
+}
 
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
+
+# ---------------------------------------------------------------------------
+# Run budget — kill switch for search and Gemini calls
+# ---------------------------------------------------------------------------
+
+@dataclass
+class _RunBudget:
+    max_search_queries: int = 20
+    max_gemini_calls: int = 50
+    search_queries_used: int = field(default=0, init=False)
+    gemini_calls_used: int = field(default=0, init=False)
+
+    def consume_search(self) -> None:
+        """Call before each Brave Search query. Raises RuntimeError when budget is exhausted."""
+        if self.search_queries_used >= self.max_search_queries:
+            raise RuntimeError(
+                f"Run aborted: search query budget exhausted ({self.max_search_queries} max)"
+            )
+        self.search_queries_used += 1
+
+    def consume_gemini(self) -> None:
+        """Call before each Gemini API call. Raises RuntimeError when budget is exhausted."""
+        if self.gemini_calls_used >= self.max_gemini_calls:
+            raise RuntimeError(
+                f"Run aborted: Gemini call budget exhausted ({self.max_gemini_calls} max)"
+            )
+        self.gemini_calls_used += 1
+
+
+# ---------------------------------------------------------------------------
+# Deterministic spike result — used as fallback when no API keys are configured
+# ---------------------------------------------------------------------------
 
 def build_deterministic_result_dict(
     prompt: str,
@@ -78,6 +140,149 @@ def build_deterministic_result(prompt: str, *, started_at: float | None = None):
     )
 
 
+# ---------------------------------------------------------------------------
+# Pure helper functions — shared between both run paths
+# ---------------------------------------------------------------------------
+
+def _regex_parse_constraints(prompt: str) -> dict:
+    normalized = prompt.lower()
+    geography = next((v for k, v in _GEOGRAPHY_HINTS.items() if k in normalized), None)
+    industry = next((v for k, v in _INDUSTRY_HINTS.items() if k in normalized), None)
+    exclusions = re.findall(r"exclude\s+([a-z0-9 ,/-]+)", normalized)
+    if "high" in normalized or "complex" in normalized:
+        complexity = "high"
+    elif "low" in normalized or "simple" in normalized:
+        complexity = "low"
+    else:
+        complexity = "medium"
+    io_type = "digital" if "digital" in normalized or "software" in normalized else "mixed"
+    return {
+        "raw_prompt": prompt,
+        "geography": geography,
+        "industry": industry,
+        "exclusions": [
+            item.strip()
+            for group in exclusions
+            for item in group.split(",")
+            if item.strip()
+        ],
+        "complexity_threshold": complexity,
+        "io_type": io_type,
+    }
+
+
+def _build_job_query(constraints: dict) -> str:
+    parts = [
+        constraints.get("geography") or "",
+        constraints.get("industry") or "B2B",
+        "complex digital operations job posting role responsibilities",
+    ]
+    if constraints.get("complexity_threshold") == "high":
+        parts.append("senior specialist analyst")
+    return " ".join(p for p in parts if p).strip()
+
+
+def _results_to_candidates(results: list[dict], constraints: dict) -> list[dict]:
+    """Maps search results to job candidate dicts. Drops any result without a URL."""
+    candidates = []
+    for result in results:
+        url = result.get("url")
+        if not url:
+            continue
+        candidates.append({
+            "title": result["title"][:120],
+            "description": (result.get("snippet") or result["title"])[:300],
+            "industry": constraints.get("industry"),
+            "source_url": url,
+            "io_type": constraints.get("io_type", "digital"),
+            "complexity_signal": constraints.get("complexity_threshold", "medium"),
+            "query": result.get("query"),
+        })
+    return candidates
+
+
+def _candidates_to_ideas_and_sources(
+    candidates: list[dict],
+) -> tuple[list[dict], list[dict]]:
+    """
+    Phase 6a synthesis: maps job candidates to IdeaBriefs without competitor checks.
+    Phase 6b will add competitor analysis and LLM-grounded synthesis.
+    """
+    ideas = []
+    sources = []
+    for candidate in candidates[:_MAX_CANDIDATES]:
+        url = candidate["source_url"]
+        sources.append({
+            "url": url,
+            "title": candidate["title"],
+            "snippet": candidate["description"],
+            "provider": "brave",
+            "query": candidate.get("query"),
+        })
+        ideas.append({
+            "title": f"{candidate['title']} Agent",
+            "one_liner": (
+                "Automates first-pass intake, classification, and exception routing for "
+                f"work similar to: {candidate['description'][:140]}"
+            ),
+            "target_customer": (
+                candidate.get("industry") or "B2B teams with document-heavy operations"
+            ),
+            "job_being_replaced": candidate["title"],
+            "gap_evidence": [
+                {
+                    "label": "Job-market source",
+                    "url": url,
+                    "note": candidate["description"][:240],
+                }
+            ],
+            "source_urls": [url],
+            "ai_feasibility_note": (
+                "Candidate identified because the source describes repeatable knowledge-work "
+                "inputs suitable for AI-assisted processing."
+            ),
+            "critique": {
+                "objections": [
+                    "Competitor coverage not yet verified — manual check recommended.",
+                    "Market size and buyer WTP require validation beyond job-board signals.",
+                ],
+                "severity": "medium",
+            },
+            "research_coverage_score": 0.55,
+            "score_rationale": (
+                "Phase 6a score: job-market signal found via live search. "
+                "Competitor check pending (Phase 6b)."
+            ),
+        })
+    return ideas, sources
+
+
+def _build_result_dict(
+    run_id: str,
+    constraints: dict,
+    ideas: list[dict],
+    started_at: float,
+    *,
+    mode: str = "live_search",
+) -> dict:
+    return {
+        "schema_version": 1,
+        "id": run_id,
+        "run_id": run_id,
+        "status": "completed",
+        "created_at": _now_iso(),
+        "constraints": constraints,
+        "ideas": ideas,
+        "run_duration_s": round(time.perf_counter() - started_at, 4),
+        "mode": mode,
+        "progress": "completed",
+    }
+
+
+# ---------------------------------------------------------------------------
+# GapHunterAgent — deployed to Vertex AI Agent Engine
+# ---------------------------------------------------------------------------
+
 class GapHunterAgent:
     def __init__(self, store=None, *, project_id: str | None = None) -> None:
         self._store = store
@@ -90,16 +295,73 @@ class GapHunterAgent:
         run_id = kwargs.get("run_id")
         prompt = kwargs.get("prompt")
         if run_id and prompt:
-            return self.run(run_id=run_id, prompt=prompt, user_id=kwargs.get("user_id"))
+            return self.run(
+                run_id=run_id,
+                prompt=prompt,
+                user_id=kwargs.get("user_id"),
+                max_search_queries=int(kwargs.get("max_search_queries", 20)),
+                max_gemini_calls=int(kwargs.get("max_gemini_calls", 50)),
+            )
         return self.hello(kwargs.get("name", "world"))
 
-    def run(self, run_id: str, prompt: str, user_id: str | None = None) -> dict[str, str]:
+    def run(
+        self,
+        run_id: str,
+        prompt: str,
+        user_id: str | None = None,
+        *,
+        max_search_queries: int = 20,
+        max_gemini_calls: int = 50,
+    ) -> dict[str, str]:
         started_at = time.perf_counter()
+        budget = _RunBudget(max_search_queries=max_search_queries, max_gemini_calls=max_gemini_calls)
 
         if self._store is not None:
-            return self._run_with_local_store(run_id, prompt, user_id, started_at)
+            return self._run_with_local_store(run_id, prompt, user_id, started_at, budget)
 
-        return self._run_with_firestore(run_id, prompt, user_id, started_at)
+        return self._run_with_firestore(run_id, prompt, user_id, started_at, budget)
+
+    # ------------------------------------------------------------------
+    # Agent steps — return data, never write to storage
+    # ------------------------------------------------------------------
+
+    def _constraint_agent(self, prompt: str, budget: _RunBudget) -> dict:
+        """Parse prompt into a ConstraintSet-compatible dict via Gemini, with regex fallback."""
+        api_key = os.getenv("GEMINI_API_KEY")
+        if api_key:
+            try:
+                budget.consume_gemini()
+                from agent.tools.gemini import parse_constraints_with_gemini
+                return parse_constraints_with_gemini(prompt, api_key)
+            except Exception:
+                logger.exception("Gemini constraint parsing failed; falling back to regex")
+        return _regex_parse_constraints(prompt)
+
+    def _job_research_agent(
+        self, constraints: dict, budget: _RunBudget, brave_key: str
+    ) -> list[dict]:
+        """Search for jobs. Returns only source-backed candidates (URL required)."""
+        budget.consume_search()
+        query = _build_job_query(constraints)
+        from agent.tools.search import brave_search
+        results = brave_search(query, brave_key, limit=5)
+        return _results_to_candidates(results, constraints)
+
+    def _finalizer(
+        self, candidates: list[dict], constraints: dict
+    ) -> tuple[list[dict], list[dict]]:
+        """Build IdeaBriefs from candidates. Validates every idea has a source URL."""
+        ideas, sources = _candidates_to_ideas_and_sources(candidates)
+        for idea in ideas:
+            if not idea.get("source_urls"):
+                raise RuntimeError(
+                    f"Finalizer produced an idea without a source URL: {idea.get('title')}"
+                )
+        return ideas, sources
+
+    # ------------------------------------------------------------------
+    # Run paths — handle storage I/O
+    # ------------------------------------------------------------------
 
     def _run_with_local_store(
         self,
@@ -107,18 +369,60 @@ class GapHunterAgent:
         prompt: str,
         user_id: str | None,
         started_at: float,
+        budget: _RunBudget,
     ) -> dict[str, str]:
         try:
             self._store.mark_running(run_id)
+
+            brave_key = os.getenv("BRAVE_SEARCH_API_KEY")
+            if not brave_key:
+                self._store.append_event(
+                    run_id, "running",
+                    f"Spike started for {user_id or 'anonymous user'} (no search key).",
+                )
+                result = build_deterministic_result(prompt, started_at=started_at)
+                status = self._store.complete_with_result(run_id, result)
+                return {"run_id": status.run_id, "status": status.status.value}
+
+            self._store.append_event(run_id, "parsing_constraints", "Parsing constraints...")
+            constraints = self._constraint_agent(prompt, budget)
+
+            self._store.append_event(run_id, "researching_jobs", "Searching for job signals...")
+            candidates = self._job_research_agent(constraints, budget, brave_key)
+
+            if not candidates:
+                raise RuntimeError(
+                    "No source-backed job candidates found. "
+                    "Try broadening your constraints or check BRAVE_SEARCH_API_KEY."
+                )
+
             self._store.append_event(
-                run_id,
-                "running",
-                f"Agent Engine spike started for {user_id or 'anonymous user'}.",
+                run_id, "synthesizing_ideas",
+                f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
             )
-            result = build_deterministic_result(prompt, started_at=started_at)
+            ideas, sources = self._finalizer(candidates, constraints)
+
+            from app.models import SourceEvidence
+            for src in sources:
+                self._store.append_source(
+                    run_id,
+                    SourceEvidence(
+                        url=src["url"],
+                        title=src.get("title"),
+                        snippet=src.get("snippet"),
+                        provider=src.get("provider"),
+                        query=src.get("query"),
+                    ),
+                )
+
+            result_dict = _build_result_dict(run_id, constraints, ideas, started_at)
+            from app.models import RunResult
+            result = RunResult.model_validate(result_dict)
             status = self._store.complete_with_result(run_id, result)
             return {"run_id": status.run_id, "status": status.status.value}
+
         except Exception as exc:
+            logger.exception("Run %s failed", run_id)
             status = self._store.fail_with_error(run_id, str(exc))
             return {"run_id": status.run_id, "status": status.status.value}
 
@@ -128,29 +432,80 @@ class GapHunterAgent:
         prompt: str,
         user_id: str | None,
         started_at: float,
+        budget: _RunBudget,
     ) -> dict[str, str]:
         from google.cloud import firestore
 
-        project_id = self._project_id or os.getenv("GCP_PROJECT_ID") or os.getenv("GOOGLE_CLOUD_PROJECT")
+        project_id = (
+            self._project_id
+            or os.getenv("GCP_PROJECT_ID")
+            or os.getenv("GOOGLE_CLOUD_PROJECT")
+        )
         client = firestore.Client(project=project_id)
-        run_ref = client.collection(os.getenv("FIRESTORE_COLLECTION", "runs")).document(run_id)
+        collection = os.getenv("FIRESTORE_COLLECTION", "runs")
+        run_ref = client.collection(collection).document(run_id)
 
-        try:
-            run_ref.update({"status": "running", "progress": "running"})
+        seq = 0
+
+        def emit(stage: str, message: str) -> None:
+            nonlocal seq
+            seq += 1
             event = {
-                "id": "000001",
-                "sequence": 1,
-                "stage": "running",
-                "message": f"Agent Engine spike started for {user_id or 'anonymous user'}.",
+                "id": f"{seq:06d}",
+                "sequence": seq,
+                "stage": stage,
+                "message": message,
                 "created_at": _now_iso(),
             }
             run_ref.collection("events").document(event["id"]).set(event)
-            run_ref.update({"event_sequence": 1})
+            run_ref.update({"event_sequence": seq, "progress": stage})
 
-            result = build_deterministic_result_dict(prompt, run_id=run_id, started_at=started_at)
-            run_ref.update(result)
+        try:
+            run_ref.update({"status": "running", "progress": "running"})
+
+            brave_key = os.getenv("BRAVE_SEARCH_API_KEY")
+            if not brave_key:
+                emit("running", f"Spike started for {user_id or 'anonymous user'} (no search key).")
+                result_dict = build_deterministic_result_dict(prompt, run_id=run_id, started_at=started_at)
+                run_ref.update(result_dict)
+                return {"run_id": run_id, "status": "completed"}
+
+            emit("parsing_constraints", "Parsing constraints...")
+            constraints = self._constraint_agent(prompt, budget)
+
+            emit("researching_jobs", "Searching for job signals...")
+            candidates = self._job_research_agent(constraints, budget, brave_key)
+
+            if not candidates:
+                raise RuntimeError(
+                    "No source-backed job candidates found. "
+                    "Try broadening your constraints or check BRAVE_SEARCH_API_KEY."
+                )
+
+            emit(
+                "synthesizing_ideas",
+                f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
+            )
+            ideas, sources = self._finalizer(candidates, constraints)
+
+            for src in sources:
+                source_doc = {
+                    "id": uuid4().hex,
+                    "url": src["url"],
+                    "title": src.get("title"),
+                    "snippet": src.get("snippet"),
+                    "provider": src.get("provider"),
+                    "query": src.get("query"),
+                    "created_at": _now_iso(),
+                }
+                run_ref.collection("sources").document(source_doc["id"]).set(source_doc)
+
+            result_dict = _build_result_dict(run_id, constraints, ideas, started_at)
+            run_ref.update(result_dict)
             return {"run_id": run_id, "status": "completed"}
+
         except Exception as exc:
+            logger.exception("Run %s failed", run_id)
             run_ref.update({"status": "failed", "progress": "failed", "error": str(exc)[:500]})
             return {"run_id": run_id, "status": "failed"}
 

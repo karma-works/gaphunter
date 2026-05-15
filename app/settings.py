@@ -17,6 +17,10 @@ class Settings:
     job_search_engine_id: str | None = os.getenv("JOB_SEARCH_ENGINE_ID")
     competitor_search_engine_id: str | None = os.getenv("COMPETITOR_SEARCH_ENGINE_ID")
     agent_backend: str = os.getenv("AGENT_BACKEND", "local").lower()
+    agent_engine_resource_name: str | None = os.getenv("AGENT_ENGINE_RESOURCE_NAME")
+    agent_engine_location: str = os.getenv("AGENT_ENGINE_LOCATION", "us-central1")
+    max_search_queries_per_run: int = int(os.getenv("MAX_SEARCH_QUERIES_PER_RUN", "20"))
+    max_gemini_calls_per_run: int = int(os.getenv("MAX_GEMINI_CALLS_PER_RUN", "50"))
 
     @property
     def live_search_enabled(self) -> bool:
