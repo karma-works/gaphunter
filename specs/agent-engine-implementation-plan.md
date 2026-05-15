@@ -330,6 +330,38 @@ Acceptance criteria:
 - Critiques are grounded in source evidence from the run, not generic.
 - Research coverage score reflects actual source coverage, not business viability confidence.
 
+## Phase 6d: Cloud Tasks Invocation
+
+Purpose: replace the background-thread invocation of Agent Engine with Cloud Tasks so Cloud Run is never responsible for keeping a long-running connection alive.
+
+**Why this is needed:** `AgentEngineGateway` currently spawns a non-daemon thread and relies on `--min-instances 1` to prevent the container from being killed before `remote_agent.query()` is called. Cloud Tasks removes both constraints: Cloud Run enqueues a task and returns; a separate Cloud Run task-handler invokes Agent Engine synchronously and retries on failure.
+
+Tasks:
+
+- Create a Cloud Tasks queue (`gaphunter-agent-engine`) in the same project.
+- Add `POST /internal/tasks/run-agent` route (not publicly reachable — protected by Cloud Tasks OIDC header verification). This handler calls `remote_agent.query()` synchronously and handles errors by writing `failed` to Firestore.
+- Replace `AgentEngineGateway._invoke` (thread) with a Cloud Tasks enqueue call: `tasks_client.create_task(queue, body={run_id, prompt})`.
+- Remove `--min-instances 1` from Cloud Run after validating that task delivery is reliable (Cloud Tasks retries on non-2xx responses, so transient cold-start errors are automatically retried).
+- Grant Cloud Tasks service account `roles/run.invoker` on the Cloud Run service.
+
+Expected files:
+
+- `app/agent_gateway.py` (replace thread logic with tasks enqueue)
+- `app/main.py` (add `/internal/tasks/run-agent` route)
+- `app/settings.py` (add `CLOUD_TASKS_QUEUE` setting)
+- `scripts/setup-cloud-tasks.sh` (queue creation + IAM)
+
+Acceptance criteria:
+
+- `POST /runs` enqueues a Cloud Task and returns `{run_id, status: "queued"}` immediately.
+- A run that arrives on a cold-start instance completes without getting stuck at `queued`.
+- If the task handler fails transiently, Cloud Tasks retries and the run eventually completes.
+- `--min-instances` can be set to 0 without runs getting stuck.
+
+Rollback:
+
+- Revert `AgentEngineGateway` to non-daemon thread and re-apply `--min-instances 1`.
+
 ## Phase 7: Production Hardening
 
 Purpose: make the Agent Engine path reliable enough for repeated use.
