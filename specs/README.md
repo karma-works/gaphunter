@@ -20,6 +20,7 @@ An AI agent that takes user constraints, researches real job markets and competi
 | [ADR-005-runtime.md](ADR-005-runtime.md) | Cloud Run for serverless deployment |
 | [ADR-006-auth.md](ADR-006-auth.md) | Firebase Auth + Google Sign-In |
 | [ADR-007-gtm-mvp-scope.md](ADR-007-gtm-mvp-scope.md) | Personal tool first, productize after output quality is validated |
+| [ADR-008-agent-engine-orchestration.md](ADR-008-agent-engine-orchestration.md) | Cloud Run thin shell with Vertex AI Agent Engine orchestration |
 | [implementation-plan.md](implementation-plan.md) | Week-by-week Phase 0 plan + Phase 1/2 outlines |
 
 ## Key decisions
@@ -27,6 +28,7 @@ An AI agent that takes user constraints, researches real job markets and competi
 - **Stack is Google-native**: ADK + Gemini + Cloud Run + Firestore + Firebase Auth — consistent, manageable, no third-party LLM or auth vendors
 - **Two-model LLM strategy**: Flash for research loops (speed + cost), Pro for synthesis and critique (quality where it matters)
 - **Live web search**: Brave Search API for MVP job research and competitor checking
+- **Agent orchestration boundary**: Cloud Run is the product/API shell; Vertex AI Agent Engine owns the agentic workflow and writes progress/results to Firestore
 - **Personal tool first**: No payment infrastructure until output quality is manually validated (Phase 0 success criterion: ≥70% of ideas pass manual review)
 - **Source URL is mandatory**: Every job and competitor result must include a source URL; results without one are dropped (anti-hallucination hard constraint)
 - **Scores are coverage, not confidence**: "Research coverage score" not "confidence score" — prevents founders from treating output as a green light to build

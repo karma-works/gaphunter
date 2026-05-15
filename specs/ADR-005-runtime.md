@@ -5,13 +5,13 @@
 
 ## Context
 
-The agent runs on-demand: a user submits constraints, the agent runs for 2–5 minutes, returns output. There is no continuous background processing in v1. The runtime needs to: run a Python 3.12 ADK application, accept HTTP requests, handle runs that take several minutes, and cost nothing when idle.
+GapHunter runs on-demand: a user submits constraints, a research workflow runs for 2-5 minutes, and the product returns output. There is no continuous background processing in v1. The Cloud Run runtime needs to accept HTTP requests, serve the UI, hand off research runs to the orchestrator, and cost nothing when idle.
 
 Alternatives: Cloud Run, GKE, Compute Engine VM, Vertex AI Pipelines, Cloud Functions.
 
 ## Decision
 
-Deploy the agent as a containerized Python application on Cloud Run.
+Deploy the product shell as a containerized Python application on Cloud Run. The original v1 framing placed the agent itself on Cloud Run, but ADR-008 supersedes that ownership boundary: Cloud Run remains the UI/API runtime, while Vertex AI Agent Engine owns the agentic workflow.
 
 ## Rationale
 
@@ -35,7 +35,7 @@ Cloud Functions was rejected: 9-minute max timeout (2nd gen) is tight for a 5-mi
 
 ## Consequences
 
-- Dockerfile is the deployment artifact. Keep it simple: base Python image, pip install requirements, run Streamlit or Flask.
+- Dockerfile is the Cloud Run product-shell deployment artifact. Keep it simple: base Python image, pip install requirements, run the FastAPI app.
 - All secrets (Gemini API key, Brave Search API key, Firebase credentials) must be stored in Secret Manager and injected as environment variables at runtime. Never hardcode.
 - Request timeout must be set to at least 600 seconds in Cloud Run config to handle slow runs.
 - Min instances = 0 in v1 (cost optimization). Set to 1 if cold starts become a UX problem post-launch.
