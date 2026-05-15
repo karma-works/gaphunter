@@ -1,9 +1,36 @@
 from types import SimpleNamespace
 
-from app.models import RunRequest, SearchResult
-from app.main import create_run, health, logo
+import app.main as main
+from app.agent_gateway import FakeAgentGateway
+from app.models import ConstraintSet, Critique, Evidence, IdeaBrief, RunRequest, RunResult, RunStatus, SearchResult
+from app.main import create_run, get_run, get_run_events, health, logo
 from app.pipeline import build_job_query, parse_constraints, run_pipeline
 from app.search import brave_search
+
+
+def _make_route_result() -> RunResult:
+    return RunResult(
+        status=RunStatus.COMPLETED,
+        constraints=ConstraintSet(raw_prompt="Swiss B2B"),
+        ideas=[
+            IdeaBrief(
+                title="Route Agent",
+                one_liner="Automates route work.",
+                target_customer="B2B teams",
+                job_being_replaced="Route Analyst",
+                gap_evidence=[
+                    Evidence(label="Source", url="https://example.com", note="Test note")
+                ],
+                source_urls=["https://example.com"],
+                ai_feasibility_note="Feasible.",
+                critique=Critique(objections=["Objection"], severity="low"),
+                research_coverage_score=0.7,
+                score_rationale="Test score.",
+            )
+        ],
+        run_duration_s=0.1,
+        mode="test",
+    )
 
 
 def test_parse_constraints_extracts_common_hints() -> None:
@@ -25,9 +52,14 @@ def test_run_pipeline_returns_source_backed_ideas() -> None:
     assert all(idea.critique.objections for idea in result.ideas)
 
 
-def test_route_functions_work_without_network() -> None:
+def test_route_functions_work_without_network(monkeypatch) -> None:
+    monkeypatch.setattr(main, "gateway", FakeAgentGateway(main.store, result=_make_route_result()))
+
     assert health()["status"] == "ok"
-    assert create_run(RunRequest(prompt="Swiss B2B workflows")).ideas
+    queued = create_run(RunRequest(prompt="Swiss B2B workflows"))
+    assert queued.status == "queued"
+    assert get_run(queued.run_id).ideas
+    assert get_run_events(queued.run_id)
     assert logo().media_type == "image/svg+xml"
 
 

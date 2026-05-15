@@ -16,6 +16,7 @@ class Settings:
     custom_search_api_key: str | None = os.getenv("GOOGLE_CUSTOM_SEARCH_API_KEY")
     job_search_engine_id: str | None = os.getenv("JOB_SEARCH_ENGINE_ID")
     competitor_search_engine_id: str | None = os.getenv("COMPETITOR_SEARCH_ENGINE_ID")
+    agent_backend: str = os.getenv("AGENT_BACKEND", "local").lower()
 
     @property
     def live_search_enabled(self) -> bool:

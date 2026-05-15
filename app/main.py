@@ -3,12 +3,13 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse, Response
 
-from app.models import RunRequest, RunStatusResponse
-from app.pipeline import run_pipeline
+from app.agent_gateway import build_agent_gateway
+from app.models import ProgressEvent, RunRequest, RunStatusResponse
 from app.settings import settings
 from app.storage import store
 
 app = FastAPI(title="GapHunter", version="0.1.0")
+gateway = build_agent_gateway(settings.agent_backend, store)
 
 
 @app.get("/health")
@@ -19,19 +20,14 @@ def health() -> dict[str, str]:
     }
 
 
-@app.post("/runs", response_model=RunStatusResponse)
+@app.post("/runs", response_model=RunStatusResponse, status_code=202)
 def create_run(request: RunRequest) -> RunStatusResponse:
     queued = store.create_queued_run(request)
     if queued.status != "queued":
         return queued
 
-    try:
-        store.mark_running(queued.run_id)
-        store.append_event(queued.run_id, "running", "Research pipeline started.")
-        result = run_pipeline(request)
-        return store.complete_with_result(queued.run_id, result)
-    except Exception as exc:
-        return store.fail_with_error(queued.run_id, str(exc))
+    gateway.start_run(queued.run_id, request)
+    return queued
 
 
 @app.get("/runs/{run_id}", response_model=RunStatusResponse)
@@ -40,6 +36,14 @@ def get_run(run_id: str) -> RunStatusResponse:
     if not result:
         raise HTTPException(status_code=404, detail="Run not found")
     return result
+
+
+@app.get("/runs/{run_id}/events", response_model=list[ProgressEvent])
+def get_run_events(run_id: str) -> list[ProgressEvent]:
+    events = store.get_events(run_id)
+    if events is None:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return events
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -89,8 +93,75 @@ def index() -> str:
     const form = document.getElementById("run-form");
     const button = document.getElementById("submit");
     const results = document.getElementById("results");
+    const stageLabels = {
+      queued: "Queued",
+      parsing_constraints: "Parsing constraints",
+      planning_research: "Planning research",
+      researching_jobs: "Researching jobs",
+      checking_competitors: "Checking competitors",
+      synthesizing_ideas: "Synthesizing ideas",
+      critiquing: "Critiquing",
+      scoring: "Scoring",
+      running: "Running research",
+      completed: "Completed",
+      failed: "Failed"
+    };
     function esc(s) {
       return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
+    }
+    function renderSources(idea) {
+      const evidence = (idea.gap_evidence || []).map((item) => `
+        <li><a href="${esc(item.url)}" rel="noreferrer" target="_blank">${esc(item.label)}</a>: ${esc(item.note)}</li>
+      `);
+      const urls = (idea.source_urls || []).map((url) => `
+        <li><a href="${esc(url)}" rel="noreferrer" target="_blank">${esc(url)}</a></li>
+      `);
+      return [...evidence, ...urls].join("");
+    }
+    function renderEvents(events) {
+      if (!events || events.length === 0) return "";
+      return `<ol>${events.map((event) => `
+        <li><strong>${esc(stageLabels[event.stage] || event.stage)}</strong>: ${esc(event.message)}</li>
+      `).join("")}</ol>`;
+    }
+    function renderRun(run) {
+      if (run.status === "failed") {
+        results.innerHTML = `<p class="error">${esc(run.error || "Run failed")}</p>${renderEvents(run.events)}`;
+        return;
+      }
+      if (run.status !== "completed") {
+        results.innerHTML = `<p>${esc(stageLabels[run.progress] || run.progress || run.status)}</p>${renderEvents(run.events)}`;
+        return;
+      }
+      results.innerHTML = (run.ideas || []).map((idea) => `
+        <article>
+          <h2>${esc(idea.title)}</h2>
+          <p>${esc(idea.one_liner)}</p>
+          <p><strong>Target:</strong> ${esc(idea.target_customer)}</p>
+          <p><strong>Job:</strong> ${esc(idea.job_being_replaced)}</p>
+          <p class="score">Research coverage: ${Math.round(idea.research_coverage_score * 100)}%</p>
+          <p><strong>Critique:</strong> ${idea.critique.objections.map(esc).join(" ")}</p>
+          <p><strong>Sources:</strong></p>
+          <ul>${renderSources(idea)}</ul>
+        </article>
+      `).join("");
+    }
+    async function pollRun(runId) {
+      const startedAt = Date.now();
+      const timeoutMs = 10 * 60 * 1000;
+      const slowMs = 5 * 60 * 1000;
+      while (Date.now() - startedAt < timeoutMs) {
+        const response = await fetch(`/runs/${encodeURIComponent(runId)}`);
+        if (!response.ok) throw new Error(await response.text());
+        const run = await response.json();
+        if (Date.now() - startedAt > slowMs && run.status !== "completed" && run.status !== "failed") {
+          run.progress = "This is taking longer than expected.";
+        }
+        renderRun(run);
+        if (run.status === "completed" || run.status === "failed") return;
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+      }
+      throw new Error("Run is taking longer than expected.");
     }
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
@@ -104,16 +175,8 @@ def index() -> str:
         });
         if (!response.ok) throw new Error(await response.text());
         const run = await response.json();
-        results.innerHTML = run.ideas.map((idea) => `
-          <article>
-            <h2>${esc(idea.title)}</h2>
-            <p>${esc(idea.one_liner)}</p>
-            <p><strong>Target:</strong> ${esc(idea.target_customer)}</p>
-            <p><strong>Job:</strong> ${esc(idea.job_being_replaced)}</p>
-            <p class="score">Research coverage: ${Math.round(idea.research_coverage_score * 100)}%</p>
-            <p><strong>Critique:</strong> ${idea.critique.objections.map(esc).join(" ")}</p>
-          </article>
-        `).join("");
+        renderRun(run);
+        await pollRun(run.run_id);
       } catch (error) {
         results.innerHTML = `<p class="error">${esc(error.message)}</p>`;
       } finally {

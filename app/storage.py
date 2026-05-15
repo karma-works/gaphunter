@@ -181,6 +181,23 @@ class RunStore:
             )
         return source
 
+    def get_events(self, run_id: str) -> list[ProgressEvent] | None:
+        if not self.get_status(run_id):
+            return None
+
+        if run_id in self._events:
+            return list(self._events[run_id])
+
+        if self._firestore_client:
+            events = [
+                ProgressEvent.model_validate(snapshot.to_dict())
+                for snapshot in self._run_ref(run_id).collection("events").order_by("sequence").stream()
+            ]
+            self._events[run_id].extend(events)
+            return events
+
+        return []
+
     def get_status(self, run_id: str) -> RunStatusResponse | None:
         if run_id in self._run_docs:
             return self._response_from_doc(self._run_docs[run_id])

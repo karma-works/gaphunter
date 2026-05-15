@@ -224,6 +224,13 @@ def test_append_event_uses_monotonic_zero_padded_ids():
     assert second.id == "000002"
     assert [event.id for event in status.events] == ["000001", "000002"]
     assert status.progress == "researching_jobs"
+    assert [event.id for event in store.get_events(queued.run_id)] == ["000001", "000002"]
+
+
+def test_get_events_returns_none_for_missing_run():
+    store = _make_store_no_firestore()
+
+    assert store.get_events("missing") is None
 
 
 def test_append_source_requires_existing_run():
