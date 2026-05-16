@@ -343,8 +343,127 @@ def test_constraint_agent_uses_regex_without_gemini_key(monkeypatch):
     agent = GapHunterAgent()
     budget = _RunBudget()
 
-    constraints = agent._constraint_agent("Swiss B2B high complexity workflows", budget)
+    constraints = agent._constraint_agent(
+        "Swiss B2B high complexity workflows",
+        budget,
+        allow_fallback=True,
+    )
 
     assert constraints["geography"] == "Switzerland"
     assert constraints["complexity_threshold"] == "high"
     assert budget.gemini_calls_used == 0
+
+
+def test_constraint_agent_requires_gemini_without_fallback(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    agent = GapHunterAgent()
+
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        agent._constraint_agent("Swiss B2B workflows", _RunBudget(), allow_fallback=False)
+
+
+def test_competitor_agent_uses_gemini_and_filters_unreturned_urls(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "fake-brave")
+    candidate = {
+        "title": "Compliance Analyst",
+        "description": "Reviews regulatory documents.",
+        "source_url": "https://example.com/job1",
+    }
+
+    def fake_brave_search(query, *args, **kwargs):
+        return [
+            {
+                "title": "Existing Tool",
+                "url": "https://competitor.example.com",
+                "snippet": "Automates compliance.",
+                "query": query,
+            }
+        ]
+
+    def fake_analyze(candidate_arg, results_arg, api_key):
+        assert candidate_arg == candidate
+        assert api_key == "fake-gemini"
+        return {
+            "competitors_found": [
+                {
+                    "title": "Existing Tool",
+                    "url": "https://competitor.example.com",
+                    "reason": "Direct workflow overlap.",
+                },
+                {
+                    "title": "Invented Tool",
+                    "url": "https://not-in-search.example.com",
+                    "reason": "Should be dropped.",
+                },
+            ],
+            "gap_confirmed": False,
+            "coverage_note": "Checked public indexed web results.",
+        }
+
+    monkeypatch.setattr("agent.tools.search.brave_search", fake_brave_search)
+    monkeypatch.setattr("agent.tools.gemini.analyze_competitors_with_gemini", fake_analyze)
+
+    budget = _RunBudget()
+    checks = GapHunterAgent()._competitor_agent(
+        [candidate],
+        budget,
+        "fake-brave",
+        allow_fallback=False,
+    )
+
+    assert checks[0]["gap_confirmed"] is False
+    assert len(checks[0]["competitors_found"]) == 1
+    assert checks[0]["competitors_found"][0]["url"] == "https://competitor.example.com"
+    assert budget.search_queries_used == 1
+    assert budget.gemini_calls_used == 1
+
+
+def test_finalizer_uses_gemini_overrides_without_changing_sources(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    candidate = {
+        "title": "Compliance Analyst",
+        "description": "Reviews regulatory documents.",
+        "industry": "Finance",
+        "source_url": "https://example.com/job1",
+        "io_type": "digital",
+        "complexity_signal": "high",
+    }
+    checks = [
+        {
+            "job_title": "Compliance Analyst",
+            "competitors_found": [],
+            "gap_confirmed": True,
+            "coverage_note": "Checked public web results.",
+        }
+    ]
+
+    def fake_synthesize(constraints, candidates, competitor_checks, api_key):
+        assert api_key == "fake-gemini"
+        return [
+            {
+                "job_title": "Compliance Analyst",
+                "title": "Regulatory Review Agent",
+                "one_liner": "Turns compliance review queues into structured exception packets.",
+                "target_customer": "Swiss financial operations teams",
+                "ai_feasibility_note": "Inputs are structured documents and review rules.",
+                "critique_objections": ["Buyer trust depends on auditability."],
+                "critique_severity": "medium",
+            }
+        ]
+
+    monkeypatch.setattr("agent.tools.gemini.synthesize_ideas_with_gemini", fake_synthesize)
+
+    ideas, sources = GapHunterAgent()._finalizer(
+        [candidate],
+        {"geography": "Switzerland"},
+        _RunBudget(),
+        checks,
+        allow_fallback=False,
+    )
+
+    assert ideas[0]["title"] == "Regulatory Review Agent"
+    assert ideas[0]["source_urls"] == ["https://example.com/job1"]
+    assert ideas[0]["gap_confirmed"] is True
+    assert ideas[0]["critique"]["objections"] == ["Buyer trust depends on auditability."]
+    assert sources[0]["url"] == "https://example.com/job1"

@@ -228,19 +228,65 @@ def _build_competitor_check(candidate: dict, results: list[dict]) -> dict:
     }
 
 
+def _normalize_competitor_check(
+    candidate: dict,
+    search_results: list[dict],
+    gemini_check: dict,
+) -> dict:
+    """Keep Gemini competitor analysis constrained to URLs returned by search."""
+    results_by_url = {
+        result["url"]: result
+        for result in search_results
+        if result.get("url") and result.get("title")
+    }
+    competitors = []
+    for item in gemini_check.get("competitors_found", []):
+        source = results_by_url.get(item.get("url"))
+        if not source:
+            continue
+        reason = item.get("reason", "").strip()
+        snippet = source.get("snippet", "")
+        competitors.append({
+            "title": source["title"],
+            "url": source["url"],
+            "snippet": f"{snippet} {reason}".strip(),
+            "query": source.get("query"),
+        })
+
+    checked_at = datetime.now(timezone.utc).date().isoformat()
+    coverage_note = gemini_check.get("coverage_note") or (
+        f"Checked public web results via Brave Search as of {checked_at}. "
+        "Non-indexed, private, and stealth products are not covered."
+    )
+    return {
+        "job_title": candidate["title"],
+        "competitors_found": competitors,
+        "gap_confirmed": not competitors,
+        "coverage_note": coverage_note,
+    }
+
+
 def _candidates_to_ideas_and_sources(
     candidates: list[dict],
     competitor_checks: list[dict] | None = None,
+    idea_overrides: list[dict] | None = None,
 ) -> tuple[list[dict], list[dict]]:
     """
-    Phase 6a synthesis: maps job candidates to IdeaBriefs without competitor checks.
-    Phase 6b will add competitor analysis and LLM-grounded synthesis.
+    Build source-grounded IdeaBrief dictionaries.
+
+    Gemini may provide copy/critique fields, but source URLs, competitor evidence,
+    gap confirmation, and coverage scores are computed from search results here.
     """
     ideas = []
     sources = []
     checks_by_title = {
         check["job_title"]: check
         for check in (competitor_checks or [])
+    }
+    overrides_by_title = {
+        override["job_title"]: override
+        for override in (idea_overrides or [])
+        if override.get("job_title")
     }
     for candidate in candidates[:_MAX_CANDIDATES]:
         url = candidate["source_url"]
@@ -271,13 +317,24 @@ def _candidates_to_ideas_and_sources(
                 f"{'' if len(competitors) == 1 else 's'}."
             )
         )
+        override = overrides_by_title.get(candidate["title"], {})
+        objections = override.get("critique_objections") or [
+            (
+                "Competitor coverage found possible existing tools; differentiation "
+                "needs manual validation."
+                if competitors else
+                "Public competitor search found no direct tools, but non-indexed "
+                "products may still exist."
+            ),
+            "Market size and buyer WTP require validation beyond job-board signals.",
+        ]
         ideas.append({
-            "title": f"{candidate['title']} Agent",
-            "one_liner": (
+            "title": override.get("title") or f"{candidate['title']} Agent",
+            "one_liner": override.get("one_liner") or (
                 "Automates first-pass intake, classification, and exception routing for "
                 f"work similar to: {candidate['description'][:140]}"
             ),
-            "target_customer": (
+            "target_customer": override.get("target_customer") or (
                 candidate.get("industry") or "B2B teams with document-heavy operations"
             ),
             "job_being_replaced": candidate["title"],
@@ -295,22 +352,13 @@ def _candidates_to_ideas_and_sources(
                 }
             ],
             "source_urls": source_urls,
-            "ai_feasibility_note": (
+            "ai_feasibility_note": override.get("ai_feasibility_note") or (
                 "Candidate identified because the source describes repeatable knowledge-work "
                 "inputs suitable for AI-assisted processing."
             ),
             "critique": {
-                "objections": [
-                    (
-                        "Competitor coverage found possible existing tools; differentiation "
-                        "needs manual validation."
-                        if competitors else
-                        "Public competitor search found no direct tools, but non-indexed "
-                        "products may still exist."
-                    ),
-                    "Market size and buyer WTP require validation beyond job-board signals.",
-                ],
-                "severity": "medium",
+                "objections": objections[:4],
+                "severity": override.get("critique_severity") or "medium",
             },
             "research_coverage_score": 0.68 if gap_confirmed else max(0.35, 0.62 - len(competitors) * 0.08),
             "score_rationale": (
@@ -390,16 +438,26 @@ class GapHunterAgent:
     # Agent steps — return data, never write to storage
     # ------------------------------------------------------------------
 
-    def _constraint_agent(self, prompt: str, budget: _RunBudget) -> dict:
-        """Parse prompt into a ConstraintSet-compatible dict via Gemini, with regex fallback."""
+    def _constraint_agent(
+        self,
+        prompt: str,
+        budget: _RunBudget,
+        *,
+        allow_fallback: bool,
+    ) -> dict:
+        """Parse prompt into a ConstraintSet-compatible dict via Gemini."""
         api_key = os.getenv("GEMINI_API_KEY")
         if api_key:
             try:
                 budget.consume_gemini()
                 from agent.tools.gemini import parse_constraints_with_gemini
                 return parse_constraints_with_gemini(prompt, api_key)
-            except Exception:
+            except Exception as exc:
+                if not allow_fallback:
+                    raise RuntimeError("Gemini constraint parsing failed") from exc
                 logger.exception("Gemini constraint parsing failed; falling back to regex")
+        elif not allow_fallback:
+            raise RuntimeError("GEMINI_API_KEY must be configured for production Agent Engine runs")
         return _regex_parse_constraints(prompt)
 
     def _job_research_agent(
@@ -413,16 +471,37 @@ class GapHunterAgent:
         return _results_to_candidates(results, constraints)
 
     def _competitor_agent(
-        self, candidates: list[dict], budget: _RunBudget, brave_key: str
+        self,
+        candidates: list[dict],
+        budget: _RunBudget,
+        brave_key: str,
+        *,
+        allow_fallback: bool,
     ) -> list[dict]:
-        """Search for existing AI products for each job candidate."""
+        """Search for existing AI products and classify direct competitors."""
         from agent.tools.search import brave_search
 
         checks = []
+        gemini_key = os.getenv("GEMINI_API_KEY")
         for candidate in candidates[:_MAX_CANDIDATES]:
             budget.consume_search()
             query = _build_competitor_query(candidate)
             results = brave_search(query, brave_key, limit=3)
+            if gemini_key:
+                try:
+                    budget.consume_gemini()
+                    from agent.tools.gemini import analyze_competitors_with_gemini
+                    check = analyze_competitors_with_gemini(candidate, results, gemini_key)
+                    checks.append(_normalize_competitor_check(candidate, results, check))
+                    continue
+                except Exception as exc:
+                    if not allow_fallback:
+                        raise RuntimeError(
+                            f"Gemini competitor analysis failed for {candidate['title']}"
+                        ) from exc
+                    logger.exception("Gemini competitor analysis failed; falling back")
+            elif not allow_fallback:
+                raise RuntimeError("GEMINI_API_KEY must be configured for competitor analysis")
             checks.append(_build_competitor_check(candidate, results))
         return checks
 
@@ -430,10 +509,36 @@ class GapHunterAgent:
         self,
         candidates: list[dict],
         constraints: dict,
+        budget: _RunBudget,
         competitor_checks: list[dict] | None = None,
+        *,
+        allow_fallback: bool,
     ) -> tuple[list[dict], list[dict]]:
         """Build IdeaBriefs from candidates. Validates every idea has a source URL."""
-        ideas, sources = _candidates_to_ideas_and_sources(candidates, competitor_checks)
+        idea_overrides = None
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            try:
+                budget.consume_gemini()
+                from agent.tools.gemini import synthesize_ideas_with_gemini
+                idea_overrides = synthesize_ideas_with_gemini(
+                    constraints,
+                    candidates[:_MAX_CANDIDATES],
+                    competitor_checks or [],
+                    gemini_key,
+                )
+            except Exception as exc:
+                if not allow_fallback:
+                    raise RuntimeError("Gemini idea synthesis failed") from exc
+                logger.exception("Gemini idea synthesis failed; falling back")
+        elif not allow_fallback:
+            raise RuntimeError("GEMINI_API_KEY must be configured for idea synthesis")
+
+        ideas, sources = _candidates_to_ideas_and_sources(
+            candidates,
+            competitor_checks,
+            idea_overrides,
+        )
         for idea in ideas:
             if not idea.get("source_urls"):
                 raise RuntimeError(
@@ -467,7 +572,7 @@ class GapHunterAgent:
                 return {"run_id": status.run_id, "status": status.status.value}
 
             self._store.append_event(run_id, "parsing_constraints", "Parsing constraints...")
-            constraints = self._constraint_agent(prompt, budget)
+            constraints = self._constraint_agent(prompt, budget, allow_fallback=True)
 
             self._store.append_event(run_id, "researching_jobs", "Searching for job signals...")
             candidates = self._job_research_agent(constraints, budget, brave_key)
@@ -481,13 +586,21 @@ class GapHunterAgent:
             self._store.append_event(
                 run_id, "checking_competitors", "Checking for existing AI products..."
             )
-            competitor_checks = self._competitor_agent(candidates, budget, brave_key)
+            competitor_checks = self._competitor_agent(
+                candidates, budget, brave_key, allow_fallback=True
+            )
 
             self._store.append_event(
                 run_id, "synthesizing_ideas",
                 f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
             )
-            ideas, sources = self._finalizer(candidates, constraints, competitor_checks)
+            ideas, sources = self._finalizer(
+                candidates,
+                constraints,
+                budget,
+                competitor_checks,
+                allow_fallback=True,
+            )
 
             from app.models import SourceEvidence
             for src in sources:
@@ -558,7 +671,7 @@ class GapHunterAgent:
                 return {"run_id": run_id, "status": "completed"}
 
             emit("parsing_constraints", "Parsing constraints...")
-            constraints = self._constraint_agent(prompt, budget)
+            constraints = self._constraint_agent(prompt, budget, allow_fallback=False)
 
             emit("researching_jobs", "Searching for job signals...")
             candidates = self._job_research_agent(constraints, budget, brave_key)
@@ -570,13 +683,21 @@ class GapHunterAgent:
                 )
 
             emit("checking_competitors", "Checking for existing AI products...")
-            competitor_checks = self._competitor_agent(candidates, budget, brave_key)
+            competitor_checks = self._competitor_agent(
+                candidates, budget, brave_key, allow_fallback=False
+            )
 
             emit(
                 "synthesizing_ideas",
                 f"Building {min(len(candidates), _MAX_CANDIDATES)} idea briefs...",
             )
-            ideas, sources = self._finalizer(candidates, constraints, competitor_checks)
+            ideas, sources = self._finalizer(
+                candidates,
+                constraints,
+                budget,
+                competitor_checks,
+                allow_fallback=False,
+            )
 
             for src in sources:
                 source_doc = {

@@ -39,10 +39,14 @@ def main() -> None:
     }
     brave_key = args.brave_search_api_key or os.getenv("BRAVE_SEARCH_API_KEY")
     gemini_key = args.gemini_api_key or os.getenv("GEMINI_API_KEY")
+    if not gemini_key:
+        raise SystemExit(
+            "GEMINI_API_KEY is required for Phase 6b Agent Engine deployment. "
+            "Production runs do not use deterministic Gemini fallback."
+        )
     if brave_key:
         env_vars["BRAVE_SEARCH_API_KEY"] = brave_key
-    if gemini_key:
-        env_vars["GEMINI_API_KEY"] = gemini_key
+    env_vars["GEMINI_API_KEY"] = gemini_key
 
     remote_agent = agent_engines.create(
         root_agent,
