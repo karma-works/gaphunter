@@ -2,7 +2,11 @@
   "mcpServers": {
     "g-code-mode": {
       "command": "uvx",
-      "args": ["g-code-mode"]
+      "args": [
+        "--from",
+        "git+https://github.com/karma-works/g-code-mode@d2c783e",
+        "g-code-mode"
+      ]
     }
   }
 }
