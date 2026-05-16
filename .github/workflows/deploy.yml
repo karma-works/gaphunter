@@ -61,6 +61,10 @@ jobs:
             GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
             SEARCH_PROVIDER=brave
             BRAVE_SEARCH_API_KEY=${{ secrets.BRAVE_SEARCH_API_KEY }}
+            AGENT_BACKEND=${{ vars.AGENT_BACKEND }}
+            AGENT_ENGINE_RESOURCE_NAME=${{ vars.AGENT_ENGINE_RESOURCE_NAME }}
+            MAX_SEARCH_QUERIES_PER_RUN=${{ vars.MAX_SEARCH_QUERIES_PER_RUN }}
+            MAX_GEMINI_CALLS_PER_RUN=${{ vars.MAX_GEMINI_CALLS_PER_RUN }}
 
       - name: Show URL
         run: echo "${{ steps.deploy.outputs.url }}"
