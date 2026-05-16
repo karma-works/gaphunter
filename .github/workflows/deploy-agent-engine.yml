@@ -9,7 +9,6 @@ on:
         default: gaphunter-agent-engine
 
 permissions:
-  actions: write
   contents: read
   id-token: write
 
@@ -41,19 +40,24 @@ jobs:
           BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |-
+          set -o pipefail
+          python agent/deploy.py \
+            --project "${{ vars.GCP_PROJECT_ID }}" \
+            --location us-central1 \
+            --display-name "${{ inputs.display_name }}" \
+            --brave-search-api-key "$BRAVE_SEARCH_API_KEY" \
+            --gemini-api-key "$GEMINI_API_KEY" \
+            2>&1 | tee /tmp/agent-engine-deploy.log
           resource_name="$(
-            python agent/deploy.py \
-              --project "${{ vars.GCP_PROJECT_ID }}" \
-              --location us-central1 \
-              --display-name "${{ inputs.display_name }}" \
-              --brave-search-api-key "$BRAVE_SEARCH_API_KEY" \
-              --gemini-api-key "$GEMINI_API_KEY" \
+            grep -E '^projects/[0-9]+/locations/[^/]+/reasoningEngines/[0-9]+$' \
+              /tmp/agent-engine-deploy.log \
               | tail -n 1
           )"
+          test -n "$resource_name"
           echo "resource_name=${resource_name}" >> "$GITHUB_OUTPUT"
           echo "Deployed ${resource_name}"
 
-      - name: Update Cloud Run Agent Engine variable
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh variable set AGENT_ENGINE_RESOURCE_NAME --body "${{ steps.deploy.outputs.resource_name }}"
+      - name: Show next command
+        run: |-
+          echo "Run locally:"
+          echo "gh variable set AGENT_ENGINE_RESOURCE_NAME --body '${{ steps.deploy.outputs.resource_name }}'"
