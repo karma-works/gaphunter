@@ -1,0 +1,59 @@
+name: Deploy Agent Engine
+
+on:
+  workflow_dispatch:
+    inputs:
+      display_name:
+        description: Agent Engine display name
+        required: false
+        default: gaphunter-agent-engine
+
+permissions:
+  actions: write
+  contents: read
+  id-token: write
+
+jobs:
+  deploy-agent-engine:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - id: auth
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v2
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: pip install -e .
+
+      - id: deploy
+        name: Deploy Agent Engine
+        env:
+          BRAVE_SEARCH_API_KEY: ${{ secrets.BRAVE_SEARCH_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |-
+          resource_name="$(
+            python agent/deploy.py \
+              --project "${{ vars.GCP_PROJECT_ID }}" \
+              --location us-central1 \
+              --display-name "${{ inputs.display_name }}" \
+              --brave-search-api-key "$BRAVE_SEARCH_API_KEY" \
+              --gemini-api-key "$GEMINI_API_KEY" \
+              | tail -n 1
+          )"
+          echo "resource_name=${resource_name}" >> "$GITHUB_OUTPUT"
+          echo "Deployed ${resource_name}"
+
+      - name: Update Cloud Run Agent Engine variable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh variable set AGENT_ENGINE_RESOURCE_NAME --body "${{ steps.deploy.outputs.resource_name }}"
