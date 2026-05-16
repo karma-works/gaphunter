@@ -2,6 +2,8 @@
 
 ![GapHunter logo](assets/logo.svg)
 
+![Screenshot](docs/screenshot.png)
+
 GapHunter is an AI-assisted market gap research tool for founders. It takes a constraint prompt, researches job-market and competitor signals, and returns ranked startup idea briefs with adversarial critiques and a research coverage score.
 
 The first implementation is a Cloud Run-ready FastAPI service. It runs in deterministic demo mode until a durable live search provider and Gemini credentials are configured, which makes the app deployable and testable while provider choices are finalized.
