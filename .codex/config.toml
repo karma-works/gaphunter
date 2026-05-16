@@ -1,0 +1,4 @@
+[mcp_servers.g-code-mode]
+command = "uvx"
+args = ["g-code-mode"]
+startup_timeout_sec = 30

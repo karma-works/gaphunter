@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "g-code-mode": {
+      "command": "uvx",
+      "args": ["g-code-mode"]
+    }
+  }
+}
