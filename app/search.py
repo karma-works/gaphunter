@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import html
+import re
+
 import httpx
 
 from app.models import SearchResult
@@ -8,6 +11,23 @@ from app.settings import settings
 
 class SearchError(RuntimeError):
     pass
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def clean_search_text(value: str | None) -> str:
+    if not value:
+        return ""
+    previous = str(value)
+    for _ in range(3):
+        decoded = html.unescape(previous)
+        if decoded == previous:
+            break
+        previous = decoded
+    without_tags = _TAG_RE.sub("", previous).replace("\u2026", "...")
+    normalized = re.sub(r"\s+", " ", without_tags).strip()
+    return re.sub(r"\.{4,}", "...", normalized)
 
 
 def brave_search(query: str, *, limit: int = 5) -> list[SearchResult]:
@@ -43,10 +63,10 @@ def brave_search(query: str, *, limit: int = 5) -> list[SearchResult]:
             continue
         snippets = [item.get("description", "")]
         snippets.extend(item.get("extra_snippets") or [])
-        snippet = " ".join(snippet for snippet in snippets if snippet).strip()
+        snippet = clean_search_text(" ".join(snippet for snippet in snippets if snippet))
         results.append(
             SearchResult(
-                title=title,
+                title=clean_search_text(title),
                 snippet=snippet,
                 url=url,
             )
@@ -80,8 +100,8 @@ def custom_search(query: str, search_engine_id: str, *, limit: int = 5) -> list[
             continue
         results.append(
             SearchResult(
-                title=title,
-                snippet=item.get("snippet", ""),
+                title=clean_search_text(title),
+                snippet=clean_search_text(item.get("snippet", "")),
                 url=link,
             )
         )

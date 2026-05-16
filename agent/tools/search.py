@@ -1,10 +1,30 @@
 from __future__ import annotations
 
+import html
+import re
+
 import httpx
 
 
 class SearchError(RuntimeError):
     pass
+
+
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def clean_search_text(value: str | None) -> str:
+    if not value:
+        return ""
+    previous = str(value)
+    for _ in range(3):
+        decoded = html.unescape(previous)
+        if decoded == previous:
+            break
+        previous = decoded
+    without_tags = _TAG_RE.sub("", previous).replace("\u2026", "...")
+    normalized = re.sub(r"\s+", " ", without_tags).strip()
+    return re.sub(r"\.{4,}", "...", normalized)
 
 
 def brave_search(
@@ -44,6 +64,11 @@ def brave_search(
             continue
         snippets = [item.get("description", "")]
         snippets.extend(item.get("extra_snippets") or [])
-        snippet = " ".join(s for s in snippets if s).strip()
-        results.append({"title": title, "url": str(url), "snippet": snippet, "query": query})
+        snippet = clean_search_text(" ".join(s for s in snippets if s))
+        results.append({
+            "title": clean_search_text(title),
+            "url": str(url),
+            "snippet": snippet,
+            "query": query,
+        })
     return results

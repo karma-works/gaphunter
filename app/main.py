@@ -109,38 +109,52 @@ def index() -> str:
     function esc(s) {
       return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#39;");
     }
+    function cleanText(value) {
+      const parser = document.createElement("textarea");
+      let text = String(value ?? "");
+      for (let i = 0; i < 3; i += 1) {
+        parser.innerHTML = text;
+        const decoded = parser.value;
+        if (decoded === text) break;
+        text = decoded;
+      }
+      return text.replace(/<[^>]*>/g, "").replace(/\\s+/g, " ").replace(/\\.{4,}/g, "...").trim();
+    }
+    function display(value) {
+      return esc(cleanText(value));
+    }
     function renderSources(idea) {
       const evidence = (idea.gap_evidence || []).map((item) => `
-        <li><a href="${esc(item.url)}" rel="noreferrer" target="_blank">${esc(item.label)}</a>: ${esc(item.note)}</li>
+        <li><a href="${esc(item.url)}" rel="noreferrer" target="_blank">${display(item.label)}</a>: ${display(item.note)}</li>
       `);
       const urls = (idea.source_urls || []).map((url) => `
-        <li><a href="${esc(url)}" rel="noreferrer" target="_blank">${esc(url)}</a></li>
+        <li><a href="${esc(url)}" rel="noreferrer" target="_blank">${display(url)}</a></li>
       `);
       return [...evidence, ...urls].join("");
     }
     function renderEvents(events) {
       if (!events || events.length === 0) return "";
       return `<ol>${events.map((event) => `
-        <li><strong>${esc(stageLabels[event.stage] || event.stage)}</strong>: ${esc(event.message)}</li>
+        <li><strong>${display(stageLabels[event.stage] || event.stage)}</strong>: ${display(event.message)}</li>
       `).join("")}</ol>`;
     }
     function renderRun(run) {
       if (run.status === "failed") {
-        results.innerHTML = `<p class="error">${esc(run.error || "Run failed")}</p>${renderEvents(run.events)}`;
+        results.innerHTML = `<p class="error">${display(run.error || "Run failed")}</p>${renderEvents(run.events)}`;
         return;
       }
       if (run.status !== "completed") {
-        results.innerHTML = `<p>${esc(stageLabels[run.progress] || run.progress || run.status)}</p>${renderEvents(run.events)}`;
+        results.innerHTML = `<p>${display(stageLabels[run.progress] || run.progress || run.status)}</p>${renderEvents(run.events)}`;
         return;
       }
       results.innerHTML = (run.ideas || []).map((idea) => `
         <article>
-          <h2>${esc(idea.title)}</h2>
-          <p>${esc(idea.one_liner)}</p>
-          <p><strong>Target:</strong> ${esc(idea.target_customer)}</p>
-          <p><strong>Job:</strong> ${esc(idea.job_being_replaced)}</p>
+          <h2>${display(idea.title)}</h2>
+          <p>${display(idea.one_liner)}</p>
+          <p><strong>Target:</strong> ${display(idea.target_customer)}</p>
+          <p><strong>Job:</strong> ${display(idea.job_being_replaced)}</p>
           <p class="score">Research coverage: ${Math.round(idea.research_coverage_score * 100)}%</p>
-          <p><strong>Critique:</strong> ${idea.critique.objections.map(esc).join(" ")}</p>
+          <p><strong>Critique:</strong> ${idea.critique.objections.map(display).join(" ")}</p>
           <p><strong>Sources:</strong></p>
           <ul>${renderSources(idea)}</ul>
         </article>
@@ -178,7 +192,7 @@ def index() -> str:
         renderRun(run);
         await pollRun(run.run_id);
       } catch (error) {
-        results.innerHTML = `<p class="error">${esc(error.message)}</p>`;
+        results.innerHTML = `<p class="error">${display(error.message)}</p>`;
       } finally {
         button.disabled = false;
       }

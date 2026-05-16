@@ -4,7 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.search import SearchError, brave_search, competitor_search, custom_search, job_search
+from app.search import (
+    SearchError,
+    brave_search,
+    clean_search_text,
+    competitor_search,
+    custom_search,
+    job_search,
+)
 
 
 def _brave_settings(**overrides):
@@ -103,6 +110,12 @@ def test_custom_search_normalizes_results(monkeypatch):
     assert results[0].title == "Custom Result"
     assert str(results[0].url) == "https://example.com/custom"
     assert results[0].snippet == "A custom search result."
+
+
+def test_clean_search_text_strips_tags_and_decodes_entities():
+    text = "Prepare <strong>monthly reports</strong> &amp;amp; dashboards &amp;hellip;"
+
+    assert clean_search_text(text) == "Prepare monthly reports & dashboards ..."
 
 
 def test_custom_search_drops_items_without_link(monkeypatch):
