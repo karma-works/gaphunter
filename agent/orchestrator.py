@@ -544,7 +544,62 @@ class GapHunterAgent:
                 raise RuntimeError(
                     f"Finalizer produced an idea without a source URL: {idea.get('title')}"
                 )
+
+        ideas = self._critique_scoring_agent(
+            ideas, candidates, competitor_checks or [], budget, allow_fallback=allow_fallback
+        )
         return ideas, sources
+
+    def _critique_scoring_agent(
+        self,
+        ideas: list[dict],
+        candidates: list[dict],
+        competitor_checks: list[dict],
+        budget: _RunBudget,
+        *,
+        allow_fallback: bool,
+    ) -> list[dict]:
+        """Replace formula-based critique/score with Gemini data-grounded output."""
+        gemini_key = os.getenv("GEMINI_API_KEY")
+        if gemini_key:
+            try:
+                budget.consume_gemini()
+                from agent.tools.gemini import critique_and_score_with_gemini
+                raw_critiques = critique_and_score_with_gemini(
+                    ideas, candidates, competitor_checks, gemini_key
+                )
+                return self._apply_critiques(ideas, raw_critiques)
+            except Exception as exc:
+                if not allow_fallback:
+                    raise RuntimeError("Gemini critique and scoring failed") from exc
+                logger.exception("Gemini critique and scoring failed; keeping formula fallback")
+        elif not allow_fallback:
+            raise RuntimeError("GEMINI_API_KEY must be configured for critique and scoring")
+        return ideas
+
+    @staticmethod
+    def _apply_critiques(ideas: list[dict], raw_critiques: list[dict]) -> list[dict]:
+        """Merge raw Gemini critique dicts back into idea briefs by job_title."""
+        critiques_by_title = {c["job_title"]: c for c in raw_critiques if c.get("job_title")}
+        enriched = []
+        for idea in ideas:
+            job_title = idea.get("job_being_replaced", "")
+            critique = critiques_by_title.get(job_title)
+            if critique and critique.get("objections"):
+                enriched.append({
+                    **idea,
+                    "critique": {
+                        "objections": critique["objections"][:4],
+                        "severity": critique.get("severity", "medium"),
+                    },
+                    "research_coverage_score": max(
+                        0.0, min(1.0, critique.get("research_coverage_score", 0.5))
+                    ),
+                    "score_rationale": critique.get("score_rationale", ""),
+                })
+            else:
+                enriched.append(idea)
+        return enriched
 
     # ------------------------------------------------------------------
     # Run paths — handle storage I/O

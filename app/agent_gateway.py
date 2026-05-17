@@ -1,7 +1,7 @@
 from __future__ import annotations
 
+import json
 import logging
-import threading
 from typing import Callable, Protocol
 
 from app.models import RunRequest, RunResult
@@ -67,20 +67,42 @@ class AgentEngineGateway:
         *,
         max_search_queries: int = 20,
         max_gemini_calls: int = 50,
+        queue: str | None = None,
+        service_url: str | None = None,
+        tasks_sa: str | None = None,
     ) -> None:
         self._resource_name = resource_name
         self._store = store
         self._max_search_queries = max_search_queries
         self._max_gemini_calls = max_gemini_calls
+        self._queue = queue
+        self._service_url = service_url
+        self._tasks_sa = tasks_sa
 
     def start_run(self, run_id: str, request: RunRequest) -> None:
-        thread = threading.Thread(
-            target=self._invoke,
-            args=(run_id, request),
-            daemon=False,
-            name=f"agent-engine-{run_id[:8]}",
+        if not self._queue or not self._service_url or not self._tasks_sa:
+            raise ValueError(
+                "CLOUD_TASKS_QUEUE, CLOUD_RUN_SERVICE_URL, and CLOUD_TASKS_SA must all be set "
+                "when AGENT_BACKEND=agent_engine"
+            )
+        from google.cloud import tasks_v2
+
+        payload = json.dumps({"run_id": run_id, "prompt": request.prompt}).encode()
+        task = tasks_v2.Task(
+            http_request=tasks_v2.HttpRequest(
+                http_method=tasks_v2.HttpMethod.POST,
+                url=f"{self._service_url}/internal/tasks/run-agent",
+                headers={"Content-Type": "application/json"},
+                body=payload,
+                oidc_token=tasks_v2.OidcToken(
+                    service_account_email=self._tasks_sa,
+                    audience=self._service_url,
+                ),
+            )
         )
-        thread.start()
+        client = tasks_v2.CloudTasksClient()
+        client.create_task(parent=self._queue, task=task)
+        logger.info("Enqueued Cloud Task for run %s", run_id)
 
     def _invoke(self, run_id: str, request: RunRequest) -> None:
         try:
@@ -132,5 +154,8 @@ def build_agent_gateway(backend: str, store: RunStore) -> AgentGateway:
             store,
             max_search_queries=settings.max_search_queries_per_run,
             max_gemini_calls=settings.max_gemini_calls_per_run,
+            queue=settings.cloud_tasks_queue,
+            service_url=settings.cloud_run_service_url,
+            tasks_sa=settings.cloud_tasks_sa,
         )
     raise ValueError(f"Unsupported AGENT_BACKEND: {backend}")

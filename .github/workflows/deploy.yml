@@ -56,7 +56,7 @@ jobs:
           service: ${{ vars.CLOUD_RUN_SERVICE }}
           region: ${{ vars.GCP_REGION }}
           image: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/${{ vars.ARTIFACT_REGISTRY_REPOSITORY }}/${{ vars.CLOUD_RUN_SERVICE }}:${{ github.sha }}
-          flags: "--allow-unauthenticated --timeout=600 --min-instances=1 --no-cpu-throttling"
+          flags: "--allow-unauthenticated --timeout=600 --min-instances=0 --no-cpu-throttling"
           env_vars: |-
             GCP_PROJECT_ID=${{ vars.GCP_PROJECT_ID }}
             SEARCH_PROVIDER=brave
@@ -65,6 +65,9 @@ jobs:
             AGENT_ENGINE_RESOURCE_NAME=${{ vars.AGENT_ENGINE_RESOURCE_NAME }}
             MAX_SEARCH_QUERIES_PER_RUN=${{ vars.MAX_SEARCH_QUERIES_PER_RUN }}
             MAX_GEMINI_CALLS_PER_RUN=${{ vars.MAX_GEMINI_CALLS_PER_RUN }}
+            CLOUD_TASKS_QUEUE=${{ vars.CLOUD_TASKS_QUEUE }}
+            CLOUD_RUN_SERVICE_URL=${{ vars.CLOUD_RUN_SERVICE_URL }}
+            CLOUD_TASKS_SA=${{ vars.CLOUD_TASKS_SA }}
 
       - name: Show URL
         run: echo "${{ steps.deploy.outputs.url }}"

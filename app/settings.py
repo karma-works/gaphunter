@@ -21,6 +21,9 @@ class Settings:
     agent_engine_location: str = os.getenv("AGENT_ENGINE_LOCATION", "us-central1")
     max_search_queries_per_run: int = int(os.getenv("MAX_SEARCH_QUERIES_PER_RUN", "20"))
     max_gemini_calls_per_run: int = int(os.getenv("MAX_GEMINI_CALLS_PER_RUN", "50"))
+    cloud_tasks_queue: str | None = os.getenv("CLOUD_TASKS_QUEUE")
+    cloud_run_service_url: str | None = os.getenv("CLOUD_RUN_SERVICE_URL")
+    cloud_tasks_sa: str | None = os.getenv("CLOUD_TASKS_SA")
 
     @property
     def live_search_enabled(self) -> bool:

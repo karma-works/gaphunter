@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
+from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi.testclient import TestClient
 
 from app.agent_gateway import AgentEngineGateway, FakeAgentGateway, LocalPipelineAgentGateway, build_agent_gateway
 from app.models import ConstraintSet, Critique, Evidence, IdeaBrief, RunRequest, RunResult, RunStatus
@@ -140,19 +143,135 @@ def test_agent_engine_gateway_writes_failed_on_invocation_error(monkeypatch):
     assert "network error" in status.error
 
 
-def test_agent_engine_gateway_start_run_spawns_thread(monkeypatch):
-    import threading
+def test_agent_engine_gateway_start_run_enqueues_cloud_task(monkeypatch):
+    created_tasks = []
 
-    invoked = threading.Event()
+    class _FakeTasksClient:
+        def create_task(self, *, parent, task):
+            created_tasks.append({"parent": parent, "task": task})
 
-    def fake_invoke(run_id, request):
-        invoked.set()
+    monkeypatch.setattr("google.cloud.tasks_v2.CloudTasksClient", _FakeTasksClient)
 
     store = RunStore()
     queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
-    gateway = AgentEngineGateway("fake-resource", store)
-    monkeypatch.setattr(gateway, "_invoke", fake_invoke)
+    gateway = AgentEngineGateway(
+        "projects/123/locations/us-central1/reasoningEngines/456",
+        store,
+        queue="projects/123/locations/us-central1/queues/gaphunter-agent-engine",
+        service_url="https://gaphunter.example.com",
+        tasks_sa="tasks-invoker@project.iam.gserviceaccount.com",
+    )
 
     gateway.start_run(queued.run_id, RunRequest(prompt="Swiss B2B"))
 
-    assert invoked.wait(timeout=2)
+    assert len(created_tasks) == 1
+    http_req = created_tasks[0]["task"].http_request
+    assert http_req.url == "https://gaphunter.example.com/internal/tasks/run-agent"
+    body = json.loads(http_req.body)
+    assert body["run_id"] == queued.run_id
+    assert body["prompt"] == "Swiss B2B"
+    assert http_req.oidc_token.service_account_email == "tasks-invoker@project.iam.gserviceaccount.com"
+    assert http_req.oidc_token.audience == "https://gaphunter.example.com"
+
+
+def test_agent_engine_gateway_start_run_raises_without_cloud_tasks_config():
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
+    gateway = AgentEngineGateway("fake-resource", store)
+
+    with pytest.raises(ValueError, match="CLOUD_TASKS_QUEUE"):
+        gateway.start_run(queued.run_id, RunRequest(prompt="Swiss B2B"))
+
+
+# ---------------------------------------------------------------------------
+# /internal/tasks/run-agent route
+# ---------------------------------------------------------------------------
+
+def _make_agent_engine_gateway(store: RunStore) -> AgentEngineGateway:
+    return AgentEngineGateway(
+        "projects/123/locations/us-central1/reasoningEngines/456",
+        store,
+        queue="projects/123/locations/us-central1/queues/gaphunter-agent-engine",
+        service_url="https://gaphunter.example.com",
+        tasks_sa="tasks-invoker@project.iam.gserviceaccount.com",
+    )
+
+
+def test_run_agent_task_route_calls_invoke(monkeypatch):
+    import app.main as main_module
+    from app.settings import Settings
+
+    invoked = []
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss B2B"))
+    agent_gw = _make_agent_engine_gateway(store)
+    monkeypatch.setattr(agent_gw, "_invoke", lambda run_id, req: invoked.append((run_id, req.prompt)))
+    monkeypatch.setattr(main_module, "gateway", agent_gw)
+    monkeypatch.setattr(main_module, "store", store)
+    # gcp_project_id=None → OIDC verification is skipped
+    monkeypatch.setattr(main_module, "settings", Settings(gcp_project_id=None))
+
+    client = TestClient(main_module.app)
+    response = client.post(
+        "/internal/tasks/run-agent",
+        json={"run_id": queued.run_id, "prompt": "Swiss B2B"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["run_id"] == queued.run_id
+    assert invoked == [(queued.run_id, "Swiss B2B")]
+
+
+def test_run_agent_task_route_returns_400_for_missing_payload(monkeypatch):
+    import app.main as main_module
+    from app.settings import Settings
+
+    monkeypatch.setattr(main_module, "settings", Settings(gcp_project_id=None))
+
+    client = TestClient(main_module.app)
+    response = client.post("/internal/tasks/run-agent", json={"run_id": "only-run-id"})
+
+    assert response.status_code == 400
+
+
+def test_run_agent_task_route_returns_400_when_not_agent_engine_backend(monkeypatch):
+    import app.main as main_module
+    from app.agent_gateway import LocalPipelineAgentGateway
+    from app.settings import Settings
+
+    store = RunStore()
+    monkeypatch.setattr(main_module, "gateway", LocalPipelineAgentGateway(store))
+    monkeypatch.setattr(main_module, "settings", Settings(gcp_project_id=None))
+
+    client = TestClient(main_module.app)
+    response = client.post(
+        "/internal/tasks/run-agent",
+        json={"run_id": "r1", "prompt": "Swiss B2B"},
+    )
+
+    assert response.status_code == 400
+
+
+def test_run_agent_task_route_requires_oidc_token_in_gcp(monkeypatch):
+    import app.main as main_module
+    from app.settings import Settings
+
+    store = RunStore()
+    agent_gw = _make_agent_engine_gateway(store)
+    monkeypatch.setattr(main_module, "gateway", agent_gw)
+    monkeypatch.setattr(
+        main_module,
+        "settings",
+        Settings(
+            gcp_project_id="fake-project",
+            cloud_run_service_url="https://gaphunter.example.com",
+        ),
+    )
+
+    client = TestClient(main_module.app, raise_server_exceptions=False)
+    response = client.post(
+        "/internal/tasks/run-agent",
+        json={"run_id": "r1", "prompt": "Swiss B2B"},
+    )
+
+    assert response.status_code == 401

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
+import logging
+
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, Response
 
-from app.agent_gateway import build_agent_gateway
+from app.agent_gateway import AgentEngineGateway, build_agent_gateway
 from app.models import ProgressEvent, RunRequest, RunStatusResponse
 from app.settings import settings
 from app.storage import store
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="GapHunter", version="0.1.0")
 gateway = build_agent_gateway(settings.agent_backend, store)
@@ -44,6 +48,46 @@ def get_run_events(run_id: str) -> list[ProgressEvent]:
     if events is None:
         raise HTTPException(status_code=404, detail="Run not found")
     return events
+
+
+def _verify_oidc_token(request: Request, audience: str) -> None:
+    """Raise 401 if the request does not carry a valid Cloud Tasks OIDC token."""
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Missing OIDC Bearer token")
+    token = auth[len("Bearer "):]
+    try:
+        from google.auth.transport import requests as google_requests
+        from google.oauth2 import id_token
+        id_token.verify_oauth2_token(token, google_requests.Request(), audience=audience)
+    except Exception as exc:
+        raise HTTPException(status_code=401, detail=f"Invalid OIDC token: {exc}") from exc
+
+
+@app.post("/internal/tasks/run-agent", status_code=200)
+async def run_agent_task(request: Request) -> dict[str, str]:
+    """Cloud Tasks handler that invokes Agent Engine synchronously.
+
+    Protected by Cloud Tasks OIDC token verification when running in GCP.
+    Non-2xx responses trigger Cloud Tasks retry.
+    """
+    if settings.gcp_project_id and settings.cloud_run_service_url:
+        _verify_oidc_token(request, settings.cloud_run_service_url)
+
+    body = await request.json()
+    run_id = body.get("run_id")
+    prompt = body.get("prompt")
+    if not run_id or not prompt:
+        raise HTTPException(status_code=400, detail="run_id and prompt are required")
+
+    if not isinstance(gateway, AgentEngineGateway):
+        raise HTTPException(
+            status_code=400,
+            detail="Agent Engine backend is not configured",
+        )
+
+    gateway._invoke(run_id, RunRequest(prompt=prompt))
+    return {"run_id": run_id, "status": "ok"}
 
 
 @app.get("/", response_class=HTMLResponse)

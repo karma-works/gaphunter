@@ -15,6 +15,27 @@ from agent.orchestrator import (
 from app.models import RunRequest, RunStatus
 from app.storage import RunStore
 
+# ---------------------------------------------------------------------------
+# Shared fixtures
+# ---------------------------------------------------------------------------
+
+_CANDIDATE = {
+    "title": "Compliance Analyst",
+    "description": "Reviews regulatory documents.",
+    "industry": "Finance",
+    "source_url": "https://example.com/job1",
+    "io_type": "digital",
+    "complexity_signal": "high",
+    "query": "Switzerland B2B",
+}
+
+_COMPETITOR_CHECK = {
+    "job_title": "Compliance Analyst",
+    "competitors_found": [],
+    "gap_confirmed": True,
+    "coverage_note": "Checked public web results via Brave Search.",
+}
+
 
 # ---------------------------------------------------------------------------
 # _RunBudget kill switch
@@ -453,6 +474,7 @@ def test_finalizer_uses_gemini_overrides_without_changing_sources(monkeypatch):
         ]
 
     monkeypatch.setattr("agent.tools.gemini.synthesize_ideas_with_gemini", fake_synthesize)
+    monkeypatch.setattr("agent.tools.gemini.critique_and_score_with_gemini", lambda ideas, *a, **kw: ideas)
 
     ideas, sources = GapHunterAgent()._finalizer(
         [candidate],
@@ -467,3 +489,193 @@ def test_finalizer_uses_gemini_overrides_without_changing_sources(monkeypatch):
     assert ideas[0]["gap_confirmed"] is True
     assert ideas[0]["critique"]["objections"] == ["Buyer trust depends on auditability."]
     assert sources[0]["url"] == "https://example.com/job1"
+
+
+# ---------------------------------------------------------------------------
+# Phase 6c: _critique_scoring_agent
+# ---------------------------------------------------------------------------
+
+def _make_idea(job_title: str = "Compliance Analyst") -> dict:
+    return {
+        "title": f"{job_title} Agent",
+        "one_liner": "Automates intake.",
+        "job_being_replaced": job_title,
+        "source_urls": ["https://example.com/job1"],
+        "gap_evidence": [],
+        "critique": {"objections": ["Generic objection."], "severity": "medium"},
+        "research_coverage_score": 0.5,
+        "score_rationale": "Formula fallback.",
+    }
+
+
+def _raw_critique(job_title: str = "Compliance Analyst") -> dict:
+    return {
+        "job_title": job_title,
+        "objections": [
+            "Single job posting from example.com/job1 — demand breadth unconfirmed.",
+            "No direct AI competitors found in public search; stealth tools not checked.",
+        ],
+        "severity": "low",
+        "research_coverage_score": 0.72,
+        "score_rationale": (
+            "Primary evidence: https://example.com/job1. "
+            "Competitor check returned 0 results. Coverage limited to public indexed web."
+        ),
+    }
+
+
+def test_critique_scoring_agent_replaces_critique_and_score(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    idea = _make_idea()
+
+    monkeypatch.setattr(
+        "agent.tools.gemini.critique_and_score_with_gemini",
+        lambda ideas, candidates, checks, api_key: [_raw_critique()],
+    )
+
+    budget = _RunBudget()
+    result = GapHunterAgent()._critique_scoring_agent(
+        [idea], [_CANDIDATE], [_COMPETITOR_CHECK], budget, allow_fallback=False
+    )
+
+    assert result[0]["critique"]["objections"][0].startswith("Single job posting")
+    assert result[0]["critique"]["severity"] == "low"
+    assert result[0]["research_coverage_score"] == 0.72
+    assert "https://example.com/job1" in result[0]["score_rationale"]
+    assert budget.gemini_calls_used == 1
+
+
+def test_critique_scoring_agent_falls_back_without_gemini_key(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    idea = _make_idea()
+    original_objections = idea["critique"]["objections"][:]
+
+    result = GapHunterAgent()._critique_scoring_agent(
+        [idea], [_CANDIDATE], [_COMPETITOR_CHECK], _RunBudget(), allow_fallback=True
+    )
+
+    assert result[0]["critique"]["objections"] == original_objections
+    assert result[0]["research_coverage_score"] == 0.5
+
+
+def test_critique_scoring_agent_requires_gemini_without_fallback(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        GapHunterAgent()._critique_scoring_agent(
+            [_make_idea()], [_CANDIDATE], [_COMPETITOR_CHECK], _RunBudget(), allow_fallback=False
+        )
+
+
+def test_critique_scoring_agent_skips_unmatched_job_titles(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    idea = _make_idea("Compliance Analyst")
+
+    # Gemini returns a critique for a different job_title — should not be applied
+    monkeypatch.setattr(
+        "agent.tools.gemini.critique_and_score_with_gemini",
+        lambda ideas, candidates, checks, api_key: [
+            {**_raw_critique(), "job_title": "Completely Different Job"}
+        ],
+    )
+
+    result = GapHunterAgent()._critique_scoring_agent(
+        [idea], [_CANDIDATE], [_COMPETITOR_CHECK], _RunBudget(), allow_fallback=True
+    )
+
+    assert result[0]["critique"]["objections"] == ["Generic objection."]
+    assert result[0]["research_coverage_score"] == 0.5
+
+
+def test_critique_scoring_agent_clamps_score_to_unit_interval(monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+    idea = _make_idea()
+
+    monkeypatch.setattr(
+        "agent.tools.gemini.critique_and_score_with_gemini",
+        lambda ideas, candidates, checks, api_key: [
+            {**_raw_critique(), "research_coverage_score": 1.5}
+        ],
+    )
+
+    result = GapHunterAgent()._critique_scoring_agent(
+        [idea], [_CANDIDATE], [_COMPETITOR_CHECK], _RunBudget(), allow_fallback=False
+    )
+
+    assert result[0]["research_coverage_score"] == 1.0
+
+
+def test_finalizer_emits_critique_stage_event_in_run(monkeypatch):
+    """End-to-end: full run with Brave + Gemini mocked emits critique stage in events."""
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "fake-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-gemini")
+
+    monkeypatch.setattr(
+        "agent.tools.search.brave_search",
+        lambda query, *a, **kw: (
+            [{"title": "Compliance Analyst", "url": "https://example.com/job1",
+              "snippet": "Reviews docs.", "query": query}]
+            if not query.startswith("AI agent")
+            else []
+        ),
+    )
+    monkeypatch.setattr(
+        "agent.tools.gemini.parse_constraints_with_gemini",
+        lambda prompt, api_key: {
+            "raw_prompt": prompt, "geography": "Switzerland", "industry": "Finance",
+            "exclusions": [], "complexity_threshold": "medium", "io_type": "digital",
+        },
+    )
+    monkeypatch.setattr(
+        "agent.tools.gemini.analyze_competitors_with_gemini",
+        lambda candidate, results, api_key: {
+            "competitors_found": [], "gap_confirmed": True,
+            "coverage_note": "Checked public web results.",
+        },
+    )
+    monkeypatch.setattr(
+        "agent.tools.gemini.synthesize_ideas_with_gemini",
+        lambda constraints, candidates, checks, api_key: [
+            {
+                "job_title": "Compliance Analyst",
+                "title": "Compliance Intake Agent",
+                "one_liner": "Automates intake.",
+                "target_customer": "Swiss banks",
+                "ai_feasibility_note": "Structured inputs.",
+                "critique_objections": ["Preliminary objection."],
+                "critique_severity": "medium",
+            }
+        ],
+    )
+    monkeypatch.setattr(
+        "agent.tools.gemini.critique_and_score_with_gemini",
+        lambda ideas, candidates, checks, api_key: [
+            {
+                "job_title": "Compliance Analyst",
+                "objections": [
+                    "Single source from example.com/job1 only; no second job-board confirmation.",
+                    "No competitors found in public search; stealth market risk unquantified.",
+                ],
+                "severity": "low",
+                "research_coverage_score": 0.71,
+                "score_rationale": (
+                    "Primary evidence: https://example.com/job1. "
+                    "Competitor check: 0 results. Coverage: public indexed web only."
+                ),
+            }
+        ],
+    )
+
+    store = RunStore()
+    queued = store.create_queued_run(RunRequest(prompt="Swiss Finance compliance workflows"))
+    agent = GapHunterAgent(store)
+    response = agent.run(queued.run_id, "Swiss Finance compliance workflows")
+
+    status = store.get_status(queued.run_id)
+    assert response["status"] == "completed"
+    idea = status.ideas[0]
+    assert idea.critique.objections[0].startswith("Single source")
+    assert idea.research_coverage_score == pytest.approx(0.71)
+    assert "https://example.com/job1" in idea.score_rationale
+    stages = [e.stage for e in status.events]
+    assert "synthesizing_ideas" in stages
