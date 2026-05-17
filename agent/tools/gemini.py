@@ -91,6 +91,11 @@ Rules:
 _CRITIQUE_PROMPT = """
 Review each idea brief and produce data-grounded objections and a research coverage score.
 
+Rules for the response structure:
+- Return one critique per idea.
+- The `job_title` field in each critique must exactly equal the `job_being_replaced` value
+  from the corresponding idea in the input — not the idea's display title.
+
 Rules for objections:
 - Write 2-4 objections per idea.
 - Every objection must cite specific evidence from the provided sources: the job description text,
